@@ -19,7 +19,7 @@ do_action( 'woocommerce_before_customer_login_form' );
     <div class="ss-auth-panel ss-auth-panel--login" id="ss-panel-login">
 
         <div class="ss-auth-logo">
-            <a href="<?php echo esc_url( home_url( '/' ) ); ?>"><span>x</span>statiq</a>
+            <a href="<?php echo esc_url( home_url( '/' ) ); ?>">xstatiq<em>_</em></a>
         </div>
 
         <?php wc_print_notices(); ?>
@@ -74,7 +74,7 @@ do_action( 'woocommerce_before_customer_login_form' );
     <div class="ss-auth-panel ss-auth-panel--register" id="ss-panel-register" hidden>
 
         <div class="ss-auth-logo">
-            <a href="<?php echo esc_url( home_url( '/' ) ); ?>"><span>x</span>statiq</a>
+            <a href="<?php echo esc_url( home_url( '/' ) ); ?>">xstatiq<em>_</em></a>
         </div>
 
         <h2 class="ss-auth-title"><?php esc_html_e( 'Create an account', 'woocommerce' ); ?></h2>
