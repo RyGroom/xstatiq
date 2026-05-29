@@ -358,34 +358,51 @@ function statsight_get_user_plan(): string {
         return $plan;
     }
 
-    if ( ! $user_id || ! function_exists( 'wc_get_orders' ) ) {
+    if ( ! $user_id ) {
         $plan = 'free';
         return $plan;
     }
 
-    $orders = wc_get_orders( [
-        'customer_id' => $user_id,
-        'status'      => [ 'wc-completed' ],
-        'limit'       => -1,
-    ] );
-
     $has_pro   = false;
     $has_sharp = false;
 
-    foreach ( $orders as $order ) {
-        if ( ! $order ) {
-            continue;
-        }
-        foreach ( $order->get_items() as $item ) {
-            $product_id = (int) $item->get_product_id();
-            if ( $product_id === STATSIGHT_PRODUCT_SHARP ) {
-                $has_sharp = true;
-            } elseif ( $product_id === STATSIGHT_PRODUCT_PRO ) {
-                $has_pro = true;
+    // Check active WooCommerce Subscriptions first (preferred).
+    if ( function_exists( 'wcs_get_users_subscriptions' ) ) {
+        $subscriptions = wcs_get_users_subscriptions( $user_id );
+        foreach ( $subscriptions as $subscription ) {
+            if ( ! $subscription->has_status( [ 'active', 'pending-cancel' ] ) ) {
+                continue;
             }
+            foreach ( $subscription->get_items() as $item ) {
+                $product_id = (int) $item->get_product_id();
+                if ( $product_id === STATSIGHT_PRODUCT_SHARP ) {
+                    $has_sharp = true;
+                } elseif ( $product_id === STATSIGHT_PRODUCT_PRO ) {
+                    $has_pro = true;
+                }
+            }
+            if ( $has_sharp ) break;
         }
-        if ( $has_sharp ) {
-            break;
+    }
+
+    // Fall back to completed one-time orders if no subscription found.
+    if ( ! $has_sharp && ! $has_pro && function_exists( 'wc_get_orders' ) ) {
+        $orders = wc_get_orders( [
+            'customer_id' => $user_id,
+            'status'      => [ 'wc-completed' ],
+            'limit'       => -1,
+        ] );
+        foreach ( $orders as $order ) {
+            if ( ! $order ) continue;
+            foreach ( $order->get_items() as $item ) {
+                $product_id = (int) $item->get_product_id();
+                if ( $product_id === STATSIGHT_PRODUCT_SHARP ) {
+                    $has_sharp = true;
+                } elseif ( $product_id === STATSIGHT_PRODUCT_PRO ) {
+                    $has_pro = true;
+                }
+            }
+            if ( $has_sharp ) break;
         }
     }
 
@@ -10235,3 +10252,20 @@ add_action( 'woocommerce_save_account_details_errors', function ( WP_Error $erro
 add_filter( 'woocommerce_add_to_cart_redirect', function ( $url ) {
     return wc_get_checkout_url();
 } );
+
+add_filter( 'woocommerce_account_menu_items', function ( array $items ): array {
+    unset( $items['downloads'] );
+    return $items;
+} );
+
+// Prevent the "temporary password" notice from showing more than once.
+// WooCommerce's my-account shortcode can output it twice if the page
+// template renders the shortcode in multiple contexts.
+add_filter( 'woocommerce_add_notice', function ( string $message, string $notice_type ): string {
+    static $shown = false;
+    if ( $notice_type === 'notice' && str_contains( $message, 'temporary password' ) ) {
+        if ( $shown ) return '';
+        $shown = true;
+    }
+    return $message;
+}, 10, 2 );

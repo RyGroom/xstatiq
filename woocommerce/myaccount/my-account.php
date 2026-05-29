@@ -72,7 +72,7 @@ asort( $all_books );
 
     <!-- ── Page header ──────────────────────────────────────────────────────── -->
     <div class="acct-hero">
-        <div class="acct-hero__inner container">
+        <div class="acct-hero__inner">
             <div class="acct-avatar" aria-hidden="true">
                 <?php echo esc_html( strtoupper( substr( $user->display_name ?: $user->user_login, 0, 1 ) ) ); ?>
             </div>

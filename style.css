@@ -3,7 +3,7 @@ Theme Name: xstatiq
 Theme URI: https://statsight.com/
 Author: Statsight
 Description: Sports prop aggregator — compare betting odds across FanDuel, Fanatics, Bet365, Caesars, and more.
-Version: 8.85
+Version: 8.98
 Text Domain: statsight
 */
 
@@ -2363,6 +2363,18 @@ tr[data-player] .col-player:hover {
     border: 1px solid var(--color-border);
 }
 
+/* Shop archive — strip card wrapper, full width for grid */
+.woocommerce-shop .page-content,
+.woocommerce-shop .entry-content,
+.post-type-archive-product .page-content,
+.post-type-archive-product .entry-content {
+    background: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    max-width: 100% !important;
+}
+
 .entry-header { margin-bottom: var(--spacing-xl); }
 
 .entry-title {
@@ -4234,7 +4246,7 @@ body.odds-modal-open {
 }
 
 /* Dashboard only: hide WC navigation sidebar (sub-endpoints keep it) */
-.woocommerce-account.logged-in:not(.woocommerce-orders):not(.woocommerce-edit-account):not(.woocommerce-edit-address):not(.woocommerce-downloads):not(.woocommerce-view-order):not(.woocommerce-payment-methods) .woocommerce-MyAccount-navigation {
+.woocommerce-account.logged-in:not(.woocommerce-orders):not(.woocommerce-edit-account):not(.woocommerce-edit-address):not(.woocommerce-downloads):not(.woocommerce-view-order):not(.woocommerce-view-subscription):not(.woocommerce-payment-methods) .woocommerce-MyAccount-navigation {
     display: none !important;
 }
 
@@ -4260,6 +4272,97 @@ body.odds-modal-open {
     max-width: var(--container-max) !important;
     margin: 0 auto !important;
     float: none !important;
+}
+
+/* ── View Subscription detail page ── */
+.woocommerce-view-subscription .woocommerce-MyAccount-content h2 {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--color-text);
+    margin: 0 0 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.shop_table.subscription_details,
+.shop_table.order_details,
+.woocommerce-view-subscription .shop_table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    margin-bottom: 2rem;
+}
+
+.shop_table.subscription_details th,
+.shop_table.subscription_details td,
+.woocommerce-view-subscription .shop_table th,
+.woocommerce-view-subscription .shop_table td {
+    padding: 0.85rem 1.25rem;
+    font-size: 0.9rem;
+    color: var(--color-text);
+    border-bottom: 1px solid var(--color-border);
+    text-align: left;
+    vertical-align: middle;
+}
+
+.shop_table.subscription_details tr:last-child th,
+.shop_table.subscription_details tr:last-child td,
+.woocommerce-view-subscription .shop_table tr:last-child th,
+.woocommerce-view-subscription .shop_table tr:last-child td {
+    border-bottom: none;
+}
+
+.shop_table.subscription_details thead th,
+.woocommerce-view-subscription .shop_table thead th {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: rgba(240, 242, 247, 0.45);
+}
+
+.shop_table.subscription_details tfoot th,
+.shop_table.subscription_details tfoot td {
+    font-weight: 600;
+}
+
+/* Action buttons (Cancel, Change payment) */
+.woocommerce-view-subscription .button,
+.subscription-details-table .button {
+    display: inline-block;
+    padding: 0.4rem 1rem;
+    border-radius: var(--radius);
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-decoration: none;
+    margin-right: 0.5rem;
+    transition: opacity 0.15s;
+    cursor: pointer;
+    border: none;
+}
+
+.woocommerce-view-subscription .button.cancel {
+    background: transparent;
+    border: 1px solid var(--color-border);
+    color: var(--color-text);
+}
+
+.woocommerce-view-subscription .button.cancel:hover {
+    border-color: #ef4444;
+    color: #ef4444;
+}
+
+.woocommerce-view-subscription .button:not(.cancel) {
+    background: var(--color-primary);
+    color: #fff;
+}
+
+.woocommerce-view-subscription .button:not(.cancel):hover {
+    opacity: 0.85;
+    color: #fff;
 }
 
 /* Addresses page: billing + shipping side by side — override WC float/clearfix */
@@ -6707,9 +6810,7 @@ body.odds-modal-open {
 
 /* ── Hero ── */
 .acct-hero {
-    background: var(--color-surface);
-    border-bottom: 1px solid var(--color-border);
-    padding: var(--spacing-lg) 0;
+    padding: var(--spacing-lg) var(--spacing-xl);
 }
 
 .acct-hero__inner {
@@ -6717,6 +6818,13 @@ body.odds-modal-open {
     align-items: center;
     gap: var(--spacing-md);
     flex-wrap: wrap;
+    width: 100%;
+    max-width: var(--container-width);
+    margin: 0 auto;
+    padding: var(--spacing-lg);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
 }
 
 .acct-avatar {
@@ -9308,4 +9416,315 @@ body.odds-modal-open {
     background-color: var(--color-surface-3) !important;
     color: var(--color-text) !important;
     border: 1px solid var(--color-border) !important;
+}
+
+/* =========================================================
+   WooCommerce Order Confirmation (thank you page)
+   ========================================================= */
+
+.woocommerce-order {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 2rem 0;
+}
+
+/* "Thank you. Your order has been received." */
+.woocommerce-thankyou-order-received {
+    font-size: 1rem;
+    color: rgba(240, 242, 247, 0.6);
+    margin-bottom: 2rem;
+}
+
+/* Order meta row (number, date, email, payment) */
+.woocommerce-order-overview.woocommerce-thankyou-order-details {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem 2rem;
+    list-style: none;
+    padding: 1.25rem 1.5rem;
+    margin: 0 0 2rem;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+}
+
+.woocommerce-order-overview li {
+    font-size: 0.8rem;
+    color: rgba(240, 242, 247, 0.45);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+
+.woocommerce-order-overview li strong {
+    display: block;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--color-text);
+    text-transform: none;
+    letter-spacing: 0;
+    margin-top: 0.2rem;
+}
+
+/* Section headings */
+.woocommerce-order h2 {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--color-text);
+    margin: 2rem 0 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--color-border);
+}
+
+/* Order details table */
+.woocommerce-table--order-details {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 2rem;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+.woocommerce-table--order-details th,
+.woocommerce-table--order-details td {
+    padding: 0.85rem 1.25rem;
+    font-size: 0.9rem;
+    color: var(--color-text);
+    border-bottom: 1px solid var(--color-border);
+    text-align: left;
+}
+
+.woocommerce-table--order-details thead th {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: rgba(240, 242, 247, 0.45);
+    background: transparent;
+}
+
+.woocommerce-table--order-details tfoot tr:last-child td,
+.woocommerce-table--order-details tfoot tr:last-child th {
+    border-bottom: none;
+    font-weight: 700;
+}
+
+.woocommerce-table--order-details a {
+    color: var(--color-primary);
+}
+
+/* Related subscriptions table */
+.woocommerce-orders-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+.woocommerce-orders-table th,
+.woocommerce-orders-table td {
+    padding: 0.85rem 1.25rem;
+    font-size: 0.9rem;
+    color: var(--color-text);
+    border-bottom: 1px solid var(--color-border);
+    text-align: left;
+}
+
+.woocommerce-orders-table thead th {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: rgba(240, 242, 247, 0.45);
+    background: transparent;
+}
+
+.woocommerce-orders-table tr:last-child td {
+    border-bottom: none;
+}
+
+.woocommerce-orders-table .button,
+.woocommerce-orders-table .woocommerce-button {
+    display: inline-block;
+    padding: 0.35rem 0.85rem;
+    background: var(--color-primary);
+    color: #fff;
+    border-radius: var(--radius);
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-decoration: none;
+    transition: opacity 0.15s;
+}
+
+.woocommerce-orders-table .button:hover {
+    opacity: 0.85;
+    color: #fff;
+}
+
+/* Active subscription status badge */
+.woocommerce-orders-table .order-status {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #22c55e;
+}
+
+/* "View the status of your subscription" notice */
+.woocommerce-order p {
+    color: rgba(240, 242, 247, 0.6);
+    font-size: 0.9rem;
+    margin-bottom: 1.5rem;
+}
+
+.woocommerce-order p a {
+    color: var(--color-primary);
+}
+
+/* =========================================================
+   WooCommerce Shop / Product Archive
+   ========================================================= */
+
+/* Strip the nested card wrappers from page.php */
+.shop-archive {
+    max-width: 700px;
+    margin: 0 auto;
+    padding: 3rem var(--container-pad);
+}
+
+.shop-archive .woocommerce-notices-wrapper,
+.shop-archive > .woocommerce {
+    background: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+}
+
+/* Hide sort and result count */
+.woocommerce-ordering,
+.woocommerce-result-count {
+    display: none !important;
+}
+
+/* Page title */
+.shop-archive h1.page-title,
+.shop-archive .woocommerce-products-header__title {
+    font-size: 1.75rem;
+    font-weight: 800;
+    color: var(--color-text);
+    margin-bottom: 2rem;
+}
+
+/* Two-column grid on tablet+ */
+ul.products {
+    display: grid !important;
+    grid-template-columns: repeat(4, 1fr) !important;
+    gap: 1.5rem !important;
+    list-style: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    float: none !important;
+    clear: none !important;
+    width: 100% !important;
+}
+
+ul.products::before,
+ul.products::after {
+    display: none !important;
+}
+
+ul.products li.product {
+    clear: none !important;
+}
+
+@media (max-width: 640px) {
+    ul.products {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+ul.products li.product {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    display: flex !important;
+    flex-direction: column !important;
+    transition: border-color 0.15s;
+    margin: 0 !important;
+    float: none !important;
+    width: auto !important;
+}
+
+ul.products li.product:hover {
+    border-color: var(--color-primary);
+}
+
+ul.products li.product a img {
+    width: 100%;
+    height: 180px;
+    object-fit: cover;
+    display: block;
+    border-bottom: 1px solid var(--color-border);
+}
+
+ul.products li.product .woocommerce-loop-product__title,
+ul.products li.product h2 {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--color-text) !important;
+    padding: 1.1rem 1.5rem 0.35rem !important;
+    margin: 0 !important;
+}
+
+ul.products li.product a {
+    text-decoration: none;
+    color: var(--color-text);
+}
+
+ul.products li.product .price {
+    display: block;
+    font-size: 0.875rem;
+    color: #f0f2f7 !important;
+    padding: 0 1.5rem 1rem;
+    margin: 0;
+}
+
+ul.products li.product .price span,
+ul.products li.product .price bdi {
+    display: inline !important;
+    color: #f0f2f7 !important;
+}
+
+ul.products li.product .price ins {
+    text-decoration: none;
+}
+
+ul.products li.product .button,
+ul.products li.product .add_to_cart_button {
+    display: block !important;
+    margin: auto 1.5rem 1.5rem !important;
+    padding: 0.65rem 1rem !important;
+    background: var(--color-primary) !important;
+    color: #fff !important;
+    border: none !important;
+    border-radius: var(--radius) !important;
+    font-size: 0.9rem !important;
+    font-weight: 600 !important;
+    text-align: center !important;
+    text-decoration: none !important;
+    cursor: pointer !important;
+    transition: opacity 0.15s !important;
+}
+
+ul.products li.product .button:hover {
+    opacity: 0.85 !important;
+    color: #fff !important;
 }

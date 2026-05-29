@@ -3962,8 +3962,7 @@ function fmtMarket(key) {
         const score       = signals.reduce((s, sig) => s + (sig.value * (sig.weight / totalWeight)), 0);
         const scoreRounded = Math.round(score * 10) / 10;
 
-        const scoreColor = score >= 7 ? 'var(--color-accent)'
-                         : score >= 5 ? 'var(--color-primary)'
+        const scoreColor = score >= 5 ? 'var(--color-primary)'
                          : 'var(--color-text-muted)';
 
         const signalRows = signals.map(sig => {
