@@ -10253,6 +10253,20 @@ add_filter( 'woocommerce_add_to_cart_redirect', function ( $url ) {
     return wc_get_checkout_url();
 } );
 
+// Suppress "X has been added to your cart" notice on the login/account page.
+add_filter( 'woocommerce_add_to_cart_fragments', function ( $fragments ) {
+    if ( is_account_page() ) {
+        wc_clear_notices();
+    }
+    return $fragments;
+} );
+
+add_action( 'template_redirect', function (): void {
+    if ( is_account_page() ) {
+        wc_clear_notices();
+    }
+} );
+
 add_filter( 'woocommerce_account_menu_items', function ( array $items ): array {
     unset( $items['downloads'] );
     return $items;
