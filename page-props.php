@@ -5766,7 +5766,10 @@ function fmtMarket(key) {
                     oddsModalEmpty.classList.remove('odds-modal__empty--loading');
                     if (!json.success) {
                         if (!oddsModal.hidden && oddsModalTitle.textContent === title) {
-                            oddsModalEmpty.textContent = 'Not enough history to display a chart.';
+                            const isPlanError = json.data?.plan_required;
+                            oddsModalEmpty.textContent = isPlanError
+                                ? 'Odds history is available on Pro and Sharp plans.'
+                                : 'Not enough history to display a chart.';
                         }
                         return;
                     }
