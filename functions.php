@@ -6349,6 +6349,7 @@ function statsight_ajax_get_odds_history(): void {
     $line_norm = preg_replace( '/\.0$/', '', $line );
 
     // Fetch the 20 most recent snapshots for this exact player/market/line/book combo.
+    // Select DESC to get newest first, then reverse so chart renders oldest→newest.
     $rows = $wpdb->get_results(
         $wpdb->prepare(
             "SELECT over_odds, under_odds, stat_value, recorded_at
@@ -6358,12 +6359,13 @@ function statsight_ajax_get_odds_history(): void {
                AND player     = %s
                AND line       = %s
                AND book_key   = %s
-             ORDER BY recorded_at ASC
+             ORDER BY recorded_at DESC
              LIMIT 20",
             $event_id, $market_key, $player, $line_norm, $book_key
         ),
         ARRAY_A
     );
+    $rows = array_reverse( $rows );
 
     // If no rows found for exact line, fall back to closest available line for this combo.
     if ( empty( $rows ) && $line_norm !== 'yn' ) {
@@ -6392,12 +6394,13 @@ function statsight_ajax_get_odds_history(): void {
                        AND player     = %s
                        AND line       = %s
                        AND book_key   = %s
-                     ORDER BY recorded_at ASC
+                     ORDER BY recorded_at DESC
                      LIMIT 20",
                     $event_id, $market_key, $player, $closest_line, $book_key
                 ),
                 ARRAY_A
             );
+            $rows = array_reverse( $rows );
         }
     }
 
