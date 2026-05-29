@@ -31,8 +31,8 @@ body.login {
 
 #login h1 a::before,
 .login h1 a::before {
-    content: 'x';
-    color: #2e7cf6;
+    content: 'xstatiq';
+    color: #f0f2f7;
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
     font-size: 1.5rem;
     font-weight: 800;
@@ -42,8 +42,8 @@ body.login {
 
 #login h1 a::after,
 .login h1 a::after {
-    content: 'statiq';
-    color: #f0f2f7;
+    content: '_';
+    color: #2e7cf6;
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
     font-size: 1.5rem;
     font-weight: 800;
