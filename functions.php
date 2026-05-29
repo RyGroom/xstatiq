@@ -597,7 +597,7 @@ add_action( 'switch_theme', 'statsight_unschedule_cron' );
 function statsight_purge_odds_history(): void {
     global $wpdb;
     $table    = $wpdb->prefix . 'statsight_odds_history';
-    $cutoff   = gmdate( 'Y-m-d H:i:s', strtotime( '-1 day' ) );
+    $cutoff   = gmdate( 'Y-m-d H:i:s', strtotime( '-8 hours' ) );
     $wpdb->query(
         $wpdb->prepare( "DELETE FROM {$table} WHERE recorded_at < %s", $cutoff )
     );
