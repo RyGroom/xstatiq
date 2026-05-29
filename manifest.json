@@ -1,0 +1,27 @@
+{
+  "name": "xstatiq",
+  "short_name": "xstatiq",
+  "description": "Real-time prop betting odds, best value finder, and arbitrage detection.",
+  "start_url": "/statsight/props/",
+  "scope": "/statsight/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0a0c10",
+  "theme_color": "#0a0c10",
+  "icons": [
+    {
+      "src": "/statsight/wp-content/themes/statsight/assets/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/statsight/wp-content/themes/statsight/assets/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["sports", "finance"],
+  "screenshots": []
+}
