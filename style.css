@@ -3,7 +3,7 @@ Theme Name: xstatiq
 Theme URI: https://statsight.com/
 Author: Statsight
 Description: Sports prop aggregator — compare betting odds across FanDuel, Fanatics, Bet365, Caesars, and more.
-Version: 9.00
+Version: 9.41
 Text Domain: statsight
 */
 
@@ -2363,17 +2363,49 @@ tr[data-player] .col-player:hover {
     border: 1px solid var(--color-border);
 }
 
-/* Shop archive — strip card wrapper, full width for grid */
+
+/* Shop, account & checkout — strip the page-content card wrapper */
 .woocommerce-shop .page-content,
 .woocommerce-shop .entry-content,
 .post-type-archive-product .page-content,
-.post-type-archive-product .entry-content {
+.post-type-archive-product .entry-content,
+.woocommerce-account .page-content,
+.woocommerce-account .entry-content,
+.woocommerce-checkout .page-content,
+.woocommerce-checkout .entry-content {
     background: none !important;
     border: none !important;
     border-radius: 0 !important;
     padding: 0 !important;
     max-width: 100% !important;
 }
+
+/* Checkout — restore container padding */
+.woocommerce-checkout .container {
+    padding-top: var(--spacing-xl);
+    padding-bottom: var(--spacing-xl);
+}
+
+.woocommerce-checkout .entry-header {
+    margin-bottom: var(--spacing-lg);
+}
+
+/* Checkout — dark theme only, let WooCommerce handle layout */
+.wc-block-checkout__main {
+    background: var(--color-surface) !important;
+    border: 1px solid var(--color-border) !important;
+    border-radius: var(--radius-lg) !important;
+    padding: var(--spacing-xl) !important;
+}
+
+/* Strip nested card on order summary product item */
+.wc-block-components-order-summary-item {
+    background: transparent !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+}
+
 
 .entry-header { margin-bottom: var(--spacing-xl); }
 
@@ -4274,6 +4306,13 @@ body.odds-modal-open {
     max-width: var(--container-max) !important;
     margin: 0 auto !important;
     float: none !important;
+}
+
+/* Dashboard: no sidebar, so remove wrapper gap/padding — acct-body handles spacing */
+.woocommerce-account.logged-in:not(.woocommerce-orders):not(.woocommerce-edit-account):not(.woocommerce-edit-address):not(.woocommerce-downloads):not(.woocommerce-view-order):not(.woocommerce-view-subscription):not(.woocommerce-payment-methods) .woocommerce {
+    gap: 0 !important;
+    padding: 0 !important;
+    display: block !important;
 }
 
 /* ── View Subscription detail page ── */
@@ -6812,8 +6851,10 @@ body.odds-modal-open {
 
 /* ── Hero ── */
 .acct-hero {
-    padding: var(--spacing-lg) var(--spacing-xl);
+    padding-top: var(--spacing-md);
+    padding-bottom: 0;
 }
+
 
 .acct-hero__inner {
     display: flex;
@@ -6821,8 +6862,6 @@ body.odds-modal-open {
     gap: var(--spacing-md);
     flex-wrap: wrap;
     width: 100%;
-    max-width: var(--container-width);
-    margin: 0 auto;
     padding: var(--spacing-lg);
     background: var(--color-surface);
     border: 1px solid var(--color-border);
@@ -6915,7 +6954,7 @@ body.odds-modal-open {
 
 /* ── Body layout ── */
 .acct-body {
-    padding-top: var(--spacing-2xl);
+    padding-top: var(--spacing-lg);
     padding-bottom: var(--spacing-2xl);
 }
 
@@ -7497,26 +7536,65 @@ body.odds-modal-open {
     text-align: right;
 }
 
+/* ── Mobile tabs ── */
+.acct-tabs {
+    display: none;
+}
+
+@media (max-width: 899px) {
+    .acct-tabs {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 0;
+    }
+
+    .acct-tab {
+        flex: 1;
+        padding: 0.5rem 0.75rem;
+        background: var(--color-surface);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius);
+        color: var(--color-text-muted);
+        font-size: 0.85rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+
+    .acct-tab--active {
+        background: var(--color-primary-dim);
+        border-color: var(--color-primary);
+        color: var(--color-primary);
+    }
+}
+
 /* ── Responsive ── */
 @media (max-width: 900px) {
     .acct-grid {
-        grid-template-columns: 1fr;
+        display: flex;
+        flex-direction: column;
+        gap: var(--spacing-xl);
+        margin-top: var(--spacing-xl);
     }
 
-    .acct-col--left,
-    .acct-col--right {
+    .acct-col {
         display: contents;
     }
 
-    #acct-info          { order: 1; }
-    #acct-plan          { order: 2; }
-    #acct-notifications { order: 3; }
-    #acct-danger        { order: 4; }
+    .acct-card {
+        width: 100%;
+        box-sizing: border-box;
+    }
 }
 
 @media (max-width: 640px) {
     .acct-hero__inner {
         gap: var(--spacing-md);
+    }
+
+    .acct-card,
+    .acct-hero__inner {
+        padding: var(--spacing-md);
     }
 
     .acct-danger-row {
@@ -7533,6 +7611,14 @@ body.odds-modal-open {
 
     .acct-modal__actions .acct-btn {
         width: 100%;
+    }
+
+    .acct-signout-btn {
+        width: 100%;
+        margin-top: var(--spacing-xs);
+        padding-top: var(--spacing-sm);
+        border-top: 1px solid var(--color-border);
+        text-align: left;
     }
 }
 
@@ -9391,10 +9477,92 @@ body.odds-modal-open {
     color: var(--color-text) !important;
 }
 
+
 .wc-block-checkout__sidebar,
 .wc-block-components-order-summary {
+    background: transparent !important;
+    border: none !important;
+}
+
+.wp-block-woocommerce-checkout-order-summary-block {
     background: var(--color-surface) !important;
-    border-color: var(--color-border) !important;
+    border: 1px solid var(--color-border) !important;
+    border-radius: var(--radius-lg) !important;
+    overflow: hidden !important;
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+}
+
+.wp-block-woocommerce-checkout-order-summary-block > * {
+    padding-left: var(--spacing-lg) !important;
+    padding-right: var(--spacing-lg) !important;
+}
+
+.wp-block-woocommerce-checkout-order-summary-block .wc-block-components-checkout-order-summary__title {
+    border-top: none !important;
+    border-bottom: none !important;
+}
+
+@container (max-width: 699px) {
+    .wp-block-woocommerce-checkout-order-summary-block .wc-block-components-checkout-order-summary__title {
+        margin-top: 0 !important;
+    }
+}
+
+.wc-block-components-checkout-order-summary__content.is-open {
+    border-bottom: none !important;
+}
+
+/* Password strength indicator — dark themed */
+.woocommerce-password-strength {
+    border-radius: var(--radius) !important;
+    font-size: 0.8rem !important;
+    font-weight: 600 !important;
+    color: var(--color-text) !important;
+    text-align: center !important;
+    padding: 0.35rem 0.75rem !important;
+}
+
+.woocommerce-password-strength.short {
+    background: rgba(239, 68, 68, 0.15) !important;
+    border-color: rgba(239, 68, 68, 0.4) !important;
+    color: #f87171 !important;
+}
+
+.woocommerce-password-strength.bad {
+    background: rgba(249, 115, 22, 0.15) !important;
+    border-color: rgba(249, 115, 22, 0.4) !important;
+    color: #fb923c !important;
+}
+
+.woocommerce-password-strength.good {
+    background: rgba(234, 179, 8, 0.15) !important;
+    border-color: rgba(234, 179, 8, 0.4) !important;
+    color: #facc15 !important;
+}
+
+.woocommerce-password-strength.strong {
+    background: rgba(34, 197, 94, 0.15) !important;
+    border-color: rgba(34, 197, 94, 0.4) !important;
+    color: #4ade80 !important;
+}
+
+/* Checkout error/warning notices — dark themed */
+.wc-block-components-validation-error,
+.wc-block-store-notice,
+.wc-block-store-notice.is-error,
+.wc-block-components-notice-banner,
+.wc-block-components-notice-banner.is-error {
+    background: rgba(239, 68, 68, 0.1) !important;
+    border-color: rgba(239, 68, 68, 0.4) !important;
+    color: var(--color-text) !important;
+    border-radius: var(--radius) !important;
+}
+
+.wc-block-components-notice-banner__content,
+.wc-block-store-notice__dismiss-link,
+.wc-block-components-notice-banner p {
+    color: var(--color-text) !important;
 }
 
 /* Checkbox */

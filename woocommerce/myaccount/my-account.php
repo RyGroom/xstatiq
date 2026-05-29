@@ -71,7 +71,7 @@ asort( $all_books );
 <div class="acct-page">
 
     <!-- ── Page header ──────────────────────────────────────────────────────── -->
-    <div class="acct-hero">
+    <div class="acct-hero container">
         <div class="acct-hero__inner">
             <div class="acct-avatar" aria-hidden="true">
                 <?php echo esc_html( strtoupper( substr( $user->display_name ?: $user->user_login, 0, 1 ) ) ); ?>
@@ -91,42 +91,20 @@ asort( $all_books );
     <!-- ── Main content ─────────────────────────────────────────────────────── -->
     <div class="acct-body container">
 
+        <!-- Mobile tabs — hidden on desktop via CSS -->
+        <div class="acct-tabs" id="acct-tabs" role="tablist">
+            <button class="acct-tab acct-tab--active" data-tab="account" role="tab" aria-selected="true">Account</button>
+            <button class="acct-tab" data-tab="alerts" role="tab" aria-selected="false">Alerts</button>
+            <button class="acct-tab" data-tab="stats" role="tab" aria-selected="false">Stats</button>
+        </div>
+
         <div class="acct-grid">
 
             <!-- ── Left column ────────────────────────────────────────────── -->
             <div class="acct-col acct-col--left">
 
-                <!-- Account info card -->
-                <section class="acct-card" id="acct-info">
-                    <h2 class="acct-card__title">Account Info</h2>
-                    <p class="acct-card__sub">To update your name, email, or password, visit your account settings.</p>
-
-                    <div class="acct-info-grid">
-                        <div class="acct-info-item">
-                            <span class="acct-label">Display Name</span>
-                            <span class="acct-value"><?php echo esc_html( $user->display_name ?: '—' ); ?></span>
-                        </div>
-                        <div class="acct-info-item">
-                            <span class="acct-label">Email</span>
-                            <span class="acct-value"><?php echo esc_html( $user->user_email ); ?></span>
-                        </div>
-                        <div class="acct-info-item">
-                            <span class="acct-label">Username</span>
-                            <span class="acct-value"><?php echo esc_html( $user->user_login ); ?></span>
-                        </div>
-                        <div class="acct-info-item">
-                            <span class="acct-label">Member Since</span>
-                            <span class="acct-value"><?php echo esc_html( gmdate( 'F j, Y', strtotime( $user->user_registered ) ) ); ?></span>
-                        </div>
-                    </div>
-
-                    <a href="<?php echo esc_url( wc_get_endpoint_url( 'edit-account', '', wc_get_page_permalink( 'myaccount' ) ) ); ?>" class="acct-btn acct-btn--ghost">
-                        Edit Account
-                    </a>
-                </section>
-
                 <!-- Plan card -->
-                <section class="acct-card" id="acct-plan">
+                <section class="acct-card" id="acct-plan" data-acct-tab="account">
                     <h2 class="acct-card__title">Your Plan</h2>
 
                     <div class="acct-plan-info">
@@ -170,251 +148,37 @@ asort( $all_books );
                     <?php endif; ?>
                 </section>
 
-                <!-- Pick record card -->
-                <?php
-                $pr_wins   = (int) $pick_record['wins'];
-                $pr_losses = (int) $pick_record['losses'];
-                $pr_pushes = (int) $pick_record['pushes'];
-                $pr_total  = (int) $pick_record['total'];
-                $pr_rate   = $pick_record['hit_rate'];
-                $pr_roi    = $pick_record['roi'];
-                $pr_decidable = $pr_wins + $pr_losses;
+                <!-- Account info card -->
+                <section class="acct-card" id="acct-info" data-acct-tab="account">
+                    <h2 class="acct-card__title">Account Info</h2>
+                    <p class="acct-card__sub">To update your name, email, or password, visit your account settings.</p>
 
-                // Determine tier from the same thresholds used in community JS.
-                $pr_profitable = $pr_roi !== null && $pr_roi > 0;
-                if ( $pr_rate !== null ) {
-                    if ( $pr_rate >= 0.60 && $pr_decidable >= 20 && $pr_profitable ) {
-                        $pr_tier = [ 'label' => 'Sharp',    'mod' => 'sharp' ];
-                    } elseif ( $pr_rate >= 0.55 && $pr_decidable >= 10 && $pr_profitable ) {
-                        $pr_tier = [ 'label' => 'Solid',    'mod' => 'solid' ];
-                    } elseif ( $pr_rate >= 0.50 && $pr_decidable >= 10 ) {
-                        $pr_tier = [ 'label' => 'Trending', 'mod' => 'trending' ];
-                    } else {
-                        $pr_tier = [ 'label' => 'Rookie', 'mod' => 'rookie' ];
-                    }
-                } else {
-                    $pr_tier = [ 'label' => 'Rookie', 'mod' => 'rookie' ];
-                }
-
-                $pr_profile_url = home_url( '/community/user/' . $user->ID . '/' );
-                ?>
-                <section class="acct-card" id="acct-record">
-                    <h2 class="acct-card__title">Pick Record</h2>
-                    <p class="acct-card__sub">Your settled prop results across all sports.</p>
-
-                    <div class="acct-record">
-                        <div class="acct-record__stats">
-                            <div class="acct-record__stat">
-                                <span class="acct-record__num acct-record__num--win"><?php echo esc_html( $pr_wins ); ?></span>
-                                <span class="acct-record__label">Wins</span>
-                            </div>
-                            <div class="acct-record__stat">
-                                <span class="acct-record__num acct-record__num--loss"><?php echo esc_html( $pr_losses ); ?></span>
-                                <span class="acct-record__label">Losses</span>
-                            </div>
-                            <?php if ( $pr_pushes > 0 ) : ?>
-                            <div class="acct-record__stat">
-                                <span class="acct-record__num"><?php echo esc_html( $pr_pushes ); ?></span>
-                                <span class="acct-record__label">Pushes</span>
-                            </div>
-                            <?php endif; ?>
-                            <?php if ( $pr_rate !== null ) : ?>
-                            <div class="acct-record__stat">
-                                <span class="acct-record__num"><?php echo esc_html( round( $pr_rate * 100, 1 ) . '%' ); ?></span>
-                                <span class="acct-record__label">Hit Rate</span>
-                            </div>
-                            <?php endif; ?>
-                            <?php if ( $pr_roi !== null ) : ?>
-                            <div class="acct-record__stat">
-                                <span class="acct-record__num <?php echo $pr_roi >= 0 ? 'acct-record__num--win' : 'acct-record__num--loss'; ?>">
-                                    <?php echo esc_html( ( $pr_roi >= 0 ? '+' : '' ) . $pr_roi . '%' ); ?>
-                                </span>
-                                <span class="acct-record__label">ROI</span>
-                            </div>
-                            <?php endif; ?>
+                    <div class="acct-info-grid">
+                        <div class="acct-info-item">
+                            <span class="acct-label">Display Name</span>
+                            <span class="acct-value"><?php echo esc_html( $user->display_name ?: '—' ); ?></span>
                         </div>
-
-                        <div class="acct-record__tier">
-                            <span class="pick-record__tier pick-record__tier--<?php echo esc_attr( $pr_tier['mod'] ); ?>">
-                                <?php echo esc_html( $pr_tier['label'] ); ?>
-                            </span>
+                        <div class="acct-info-item">
+                            <span class="acct-label">Email</span>
+                            <span class="acct-value"><?php echo esc_html( $user->user_email ); ?></span>
                         </div>
-
-                        <?php if ( $pr_decidable < 10 ) : ?>
-                        <p class="acct-record__hint">
-                            <?php
-                            $needed = 10 - $pr_decidable;
-                            echo esc_html( "Settle {$needed} more pick" . ( $needed !== 1 ? 's' : '' ) . ' to unlock your hit rate and tier.' );
-                            ?>
-                        </p>
-                        <?php endif; ?>
-
-                        <p class="acct-record__hint">
-                            Only props saved <strong>before game start</strong> count toward your record.
-                        </p>
-
-                        <?php
-                        // ── Tier progress indicator ───────────────────────────
-                        // Show how far the user is from unlocking the next tier.
-                        if ( $pr_tier['mod'] !== 'sharp' ) :
-                            if ( $pr_tier['mod'] === 'rookie' ) {
-                                // Target: Trending (≥50% hit rate + ≥10 decidable)
-                                $target_label     = 'Trending';
-                                $target_decidable = 10;
-                                $target_rate      = 0.50;
-                                $picks_needed     = max( 0, $target_decidable - $pr_decidable );
-                                $rate_pct         = $pr_rate !== null ? round( $pr_rate * 100, 1 ) : null;
-                                $progress_pct     = min( 100, (int) round( ( $pr_decidable / $target_decidable ) * 100 ) );
-                            } elseif ( $pr_tier['mod'] === 'trending' ) {
-                                // Target: Solid (≥55% hit rate + ≥10 decidable + ROI > 0)
-                                $target_label     = 'Solid';
-                                $target_decidable = 10;
-                                $target_rate      = 0.55;
-                                $picks_needed     = 0; // already have enough picks
-                                $rate_pct         = $pr_rate !== null ? round( $pr_rate * 100, 1 ) : null;
-                                $progress_pct     = $pr_rate !== null ? min( 100, (int) round( ( $pr_rate / $target_rate ) * 100 ) ) : 0;
-                            } else {
-                                // Target: Sharp (≥60% hit rate + ≥20 decidable + ROI > 0)
-                                $target_label     = 'Sharp';
-                                $target_decidable = 20;
-                                $target_rate      = 0.60;
-                                $picks_needed     = max( 0, $target_decidable - $pr_decidable );
-                                $rate_pct         = $pr_rate !== null ? round( $pr_rate * 100, 1 ) : null;
-                                $progress_pct     = $pr_rate !== null
-                                    ? min( 100, (int) round( ( $pr_rate / $target_rate ) * 100 ) )
-                                    : min( 100, (int) round( ( $pr_decidable / $target_decidable ) * 100 ) );
-                            }
-                        ?>
-                        <div class="acct-tier-progress">
-                            <div class="acct-tier-progress__header">
-                                <span class="acct-tier-progress__label">Progress to <strong><?php echo esc_html( $target_label ); ?></strong></span>
-                                <span class="acct-tier-progress__pct"><?php echo esc_html( $progress_pct . '%' ); ?></span>
-                            </div>
-                            <div class="acct-tier-progress__bar">
-                                <div class="acct-tier-progress__fill" style="width:<?php echo esc_attr( $progress_pct ); ?>%"></div>
-                            </div>
-                            <ul class="acct-tier-progress__reqs">
-                                <?php if ( $pr_tier['mod'] === 'rookie' ) : ?>
-                                    <li class="<?php echo $pr_decidable >= 10 ? 'req--met' : ''; ?>">
-                                        <?php echo $pr_decidable >= 10 ? '✓' : '○'; ?> <?php echo esc_html( $pr_decidable ); ?>/10 settled picks
-                                    </li>
-                                    <li class="<?php echo ( $pr_rate !== null && $pr_rate >= 0.50 ) ? 'req--met' : ''; ?>">
-                                        <?php echo ( $pr_rate !== null && $pr_rate >= 0.50 ) ? '✓' : '○'; ?> ≥50% hit rate<?php echo $rate_pct !== null ? ' (' . esc_html( $rate_pct ) . '%)' : ''; ?>
-                                    </li>
-                                <?php elseif ( $pr_tier['mod'] === 'trending' ) : ?>
-                                    <li class="req--met">✓ ≥10 settled picks (<?php echo esc_html( $pr_decidable ); ?>)</li>
-                                    <li class="<?php echo ( $pr_rate !== null && $pr_rate >= 0.55 ) ? 'req--met' : ''; ?>">
-                                        <?php echo ( $pr_rate !== null && $pr_rate >= 0.55 ) ? '✓' : '○'; ?> ≥55% hit rate<?php echo $rate_pct !== null ? ' (' . esc_html( $rate_pct ) . '%)' : ''; ?>
-                                    </li>
-                                    <li class="<?php echo $pr_profitable ? 'req--met' : ''; ?>">
-                                        <?php echo $pr_profitable ? '✓' : '○'; ?> Positive ROI<?php echo $pr_roi !== null ? ' (' . esc_html( ( $pr_roi >= 0 ? '+' : '' ) . $pr_roi . '%' ) . ')' : ''; ?>
-                                    </li>
-                                <?php else : ?>
-                                    <li class="<?php echo $pr_decidable >= 20 ? 'req--met' : ''; ?>">
-                                        <?php echo $pr_decidable >= 20 ? '✓' : '○'; ?> <?php echo esc_html( $pr_decidable ); ?>/20 settled picks
-                                    </li>
-                                    <li class="<?php echo ( $pr_rate !== null && $pr_rate >= 0.60 ) ? 'req--met' : ''; ?>">
-                                        <?php echo ( $pr_rate !== null && $pr_rate >= 0.60 ) ? '✓' : '○'; ?> ≥60% hit rate<?php echo $rate_pct !== null ? ' (' . esc_html( $rate_pct ) . '%)' : ''; ?>
-                                    </li>
-                                    <li class="<?php echo $pr_profitable ? 'req--met' : ''; ?>">
-                                        <?php echo $pr_profitable ? '✓' : '○'; ?> Positive ROI<?php echo $pr_roi !== null ? ' (' . esc_html( ( $pr_roi >= 0 ? '+' : '' ) . $pr_roi . '%' ) . ')' : ''; ?>
-                                    </li>
-                                <?php endif; ?>
-                            </ul>
+                        <div class="acct-info-item">
+                            <span class="acct-label">Username</span>
+                            <span class="acct-value"><?php echo esc_html( $user->user_login ); ?></span>
                         </div>
-                        <?php endif; ?>
-
-                        <?php
-                        // ── Sport breakdown ───────────────────────────────────
-                        $sport_breakdown = statsight_get_user_pick_record_by_sport( $user->ID );
-                        $sport_labels    = [
-                            'basketball_nba'         => 'NBA',
-                            'americanfootball_nfl'   => 'NFL',
-                            'baseball_mlb'           => 'MLB',
-                            'icehockey_nhl'          => 'NHL',
-                            'basketball_ncaab'       => 'NCAAB',
-                            'americanfootball_ncaaf' => 'NCAAF',
-                            'mma_mixed_martial_arts' => 'MMA',
-                            'soccer_epl'             => 'EPL',
-                            'soccer_usa_mls'         => 'MLS',
-                        ];
-                        if ( count( $sport_breakdown ) > 0 ) :
-                        ?>
-                        <details class="acct-sport-breakdown">
-                            <summary class="acct-sport-breakdown__toggle">By Sport</summary>
-                            <table class="acct-sport-breakdown__table">
-                                <thead>
-                                    <tr>
-                                        <th>Sport</th>
-                                        <th>W</th>
-                                        <th>L</th>
-                                        <th>Push</th>
-                                        <th>Hit%</th>
-                                        <th>ROI</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach ( $sport_breakdown as $row ) :
-                                        $s_label   = $sport_labels[ $row['sport'] ] ?? ucwords( str_replace( '_', ' ', $row['sport'] ) );
-                                        $s_rate    = $row['hit_rate'] !== null ? round( $row['hit_rate'] * 100, 1 ) . '%' : '—';
-                                        $s_roi     = $row['roi'] !== null ? ( $row['roi'] >= 0 ? '+' : '' ) . $row['roi'] . '%' : '—';
-                                        $s_roi_cls = $row['roi'] !== null ? ( $row['roi'] > 0 ? 'sport-roi--pos' : ( $row['roi'] < 0 ? 'sport-roi--neg' : '' ) ) : '';
-                                    ?>
-                                    <tr>
-                                        <td><?php echo esc_html( $s_label ); ?></td>
-                                        <td class="sport-w"><?php echo esc_html( $row['wins'] ); ?></td>
-                                        <td class="sport-l"><?php echo esc_html( $row['losses'] ); ?></td>
-                                        <td><?php echo esc_html( $row['pushes'] ); ?></td>
-                                        <td><?php echo esc_html( $s_rate ); ?></td>
-                                        <td class="<?php echo esc_attr( $s_roi_cls ); ?>"><?php echo esc_html( $s_roi ); ?></td>
-                                    </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
-                        </details>
-                        <?php endif; ?>
+                        <div class="acct-info-item">
+                            <span class="acct-label">Member Since</span>
+                            <span class="acct-value"><?php echo esc_html( gmdate( 'F j, Y', strtotime( $user->user_registered ) ) ); ?></span>
+                        </div>
                     </div>
 
-                    <a href="<?php echo esc_url( $pr_profile_url ); ?>" class="acct-btn acct-btn--ghost">
-                        View My Profile &rarr;
+                    <a href="<?php echo esc_url( wc_get_endpoint_url( 'edit-account', '', wc_get_page_permalink( 'myaccount' ) ) ); ?>" class="acct-btn acct-btn--ghost">
+                        Edit Account
                     </a>
                 </section>
 
-                <!-- Delete account card -->
-                <section class="acct-card acct-card--danger" id="acct-danger">
-                    <p class="acct-danger-label">Delete Account</p>
-                    <p class="acct-danger-desc">
-                        Schedules your account for deletion in 30 days. You can reactivate within that window via the link in your confirmation email.
-                        <?php if ( $plan !== 'free' ) : ?>
-                            Your <?php echo esc_html( $plan_label ); ?> plan will be cancelled immediately.
-                        <?php endif; ?>
-                    </p>
-                    <div class="acct-form-footer">
-                        <button class="acct-btn acct-btn--danger" id="acct-delete-btn">
-                            Delete My Account
-                        </button>
-                    </div>
-                </section>
-
-            </div><!-- .acct-col--left -->
-
-            <!-- ── Right column ───────────────────────────────────────────── -->
-            <div class="acct-col acct-col--right">
-
-                <!-- Push notification toggle card -->
-                <section class="acct-card" id="acct-push">
-                    <h2 class="acct-card__title">Push Notifications</h2>
-                    <p class="acct-card__sub">Get instant alerts on your device — even when the app is closed.</p>
-                    <div class="push-toggle-wrap">
-                        <button class="push-toggle-btn" id="push-toggle-btn" type="button">
-                            <span id="push-toggle-label">Enable Push Notifications</span>
-                        </button>
-                        <p class="push-toggle-status" id="push-toggle-status"></p>
-                    </div>
-                </section>
-
                 <!-- Privacy settings card -->
-                <section class="acct-card" id="acct-privacy">
+                <section class="acct-card" id="acct-privacy" data-acct-tab="account">
                     <h2 class="acct-card__title">Privacy</h2>
                     <p class="acct-card__sub">Control what others can see on your public profile.</p>
 
@@ -471,18 +235,8 @@ asort( $all_books );
                     <?php endif; ?>
                 </section>
 
-                <!-- Following card -->
-                <section class="acct-card" id="acct-following">
-                    <h2 class="acct-card__title">Following</h2>
-                    <p class="acct-card__sub">Users whose public watchlists you&rsquo;re following.</p>
-                    <div id="acct-following-list">
-                        <p class="acct-loading">Loading&hellip;</p>
-                    </div>
-                    <div id="acct-following-footer" hidden></div>
-                </section>
-
                 <!-- Sportsbook preferences card -->
-                <section class="acct-card" id="acct-books">
+                <section class="acct-card" id="acct-books" data-acct-tab="account">
                     <h2 class="acct-card__title">Sportsbooks</h2>
                     <p class="acct-card__sub">Choose which books to display odds columns for. Edge and EV calculations always use all books.</p>
 
@@ -509,8 +263,50 @@ asort( $all_books );
                     </div>
                 </section>
 
+            </div><!-- .acct-col--left -->
+
+            <!-- ── Right column ───────────────────────────────────────────── -->
+            <?php
+            // Pick record variables.
+            $pr_wins      = (int) $pick_record['wins'];
+            $pr_losses    = (int) $pick_record['losses'];
+            $pr_pushes    = (int) $pick_record['pushes'];
+            $pr_total     = (int) $pick_record['total'];
+            $pr_rate      = $pick_record['hit_rate'];
+            $pr_roi       = $pick_record['roi'];
+            $pr_decidable = $pr_wins + $pr_losses;
+            $pr_profitable = $pr_roi !== null && $pr_roi > 0;
+            if ( $pr_rate !== null ) {
+                if ( $pr_rate >= 0.60 && $pr_decidable >= 20 && $pr_profitable ) {
+                    $pr_tier = [ 'label' => 'Sharp',    'mod' => 'sharp' ];
+                } elseif ( $pr_rate >= 0.55 && $pr_decidable >= 10 && $pr_profitable ) {
+                    $pr_tier = [ 'label' => 'Solid',    'mod' => 'solid' ];
+                } elseif ( $pr_rate >= 0.50 && $pr_decidable >= 10 ) {
+                    $pr_tier = [ 'label' => 'Trending', 'mod' => 'trending' ];
+                } else {
+                    $pr_tier = [ 'label' => 'Rookie', 'mod' => 'rookie' ];
+                }
+            } else {
+                $pr_tier = [ 'label' => 'Rookie', 'mod' => 'rookie' ];
+            }
+            $pr_profile_url = home_url( '/community/user/' . $user->ID . '/' );
+            ?>
+            <div class="acct-col acct-col--right">
+
+                <!-- Push notification toggle card -->
+                <section class="acct-card" id="acct-push" data-acct-tab="alerts">
+                    <h2 class="acct-card__title">Push Notifications</h2>
+                    <p class="acct-card__sub">Get instant alerts on your device — even when the app is closed.</p>
+                    <div class="push-toggle-wrap">
+                        <button class="push-toggle-btn" id="push-toggle-btn" type="button">
+                            <span id="push-toggle-label">Enable Push Notifications</span>
+                        </button>
+                        <p class="push-toggle-status" id="push-toggle-status"></p>
+                    </div>
+                </section>
+
                 <!-- Notification settings card -->
-                <section class="acct-card" id="acct-notifications">
+                <section class="acct-card" id="acct-notifications" data-acct-tab="alerts">
                     <h2 class="acct-card__title">Notification Rules</h2>
                     <p class="acct-card__sub">Get emailed when a prop hits your threshold. Each rule fires at most once per prop per day.</p>
 
@@ -536,7 +332,7 @@ asort( $all_books );
 
                 <!-- Prop Alerts card -->
                 <?php if ( $plan !== 'free' ) : ?>
-                <section class="acct-card" id="acct-prop-alerts">
+                <section class="acct-card" id="acct-prop-alerts" data-acct-tab="alerts">
                     <h2 class="acct-card__title">Prop Alerts</h2>
                     <p class="acct-card__sub">Alerts you&rsquo;ve set on individual props. Each fires once when the target odds are met.</p>
                     <div id="prop-alerts-list">
@@ -544,6 +340,201 @@ asort( $all_books );
                     </div>
                 </section>
                 <?php endif; ?>
+
+                <!-- Pick record card -->
+                <section class="acct-card" id="acct-record" data-acct-tab="stats">
+                    <h2 class="acct-card__title">Pick Record</h2>
+                    <p class="acct-card__sub">Your settled prop results across all sports.</p>
+
+                    <div class="acct-record">
+                        <div class="acct-record__stats">
+                            <div class="acct-record__stat">
+                                <span class="acct-record__num acct-record__num--win"><?php echo esc_html( $pr_wins ); ?></span>
+                                <span class="acct-record__label">Wins</span>
+                            </div>
+                            <div class="acct-record__stat">
+                                <span class="acct-record__num acct-record__num--loss"><?php echo esc_html( $pr_losses ); ?></span>
+                                <span class="acct-record__label">Losses</span>
+                            </div>
+                            <?php if ( $pr_pushes > 0 ) : ?>
+                            <div class="acct-record__stat">
+                                <span class="acct-record__num"><?php echo esc_html( $pr_pushes ); ?></span>
+                                <span class="acct-record__label">Pushes</span>
+                            </div>
+                            <?php endif; ?>
+                            <?php if ( $pr_rate !== null ) : ?>
+                            <div class="acct-record__stat">
+                                <span class="acct-record__num"><?php echo esc_html( round( $pr_rate * 100, 1 ) . '%' ); ?></span>
+                                <span class="acct-record__label">Hit Rate</span>
+                            </div>
+                            <?php endif; ?>
+                            <?php if ( $pr_roi !== null ) : ?>
+                            <div class="acct-record__stat">
+                                <span class="acct-record__num <?php echo $pr_roi >= 0 ? 'acct-record__num--win' : 'acct-record__num--loss'; ?>">
+                                    <?php echo esc_html( ( $pr_roi >= 0 ? '+' : '' ) . $pr_roi . '%' ); ?>
+                                </span>
+                                <span class="acct-record__label">ROI</span>
+                            </div>
+                            <?php endif; ?>
+                        </div>
+
+                        <div class="acct-record__tier">
+                            <span class="pick-record__tier pick-record__tier--<?php echo esc_attr( $pr_tier['mod'] ); ?>">
+                                <?php echo esc_html( $pr_tier['label'] ); ?>
+                            </span>
+                        </div>
+
+                        <?php if ( $pr_decidable < 10 ) : ?>
+                        <p class="acct-record__hint">
+                            <?php
+                            $needed = 10 - $pr_decidable;
+                            echo esc_html( "Settle {$needed} more pick" . ( $needed !== 1 ? 's' : '' ) . ' to unlock your hit rate and tier.' );
+                            ?>
+                        </p>
+                        <?php endif; ?>
+
+                        <p class="acct-record__hint">
+                            Only props saved <strong>before game start</strong> count toward your record.
+                        </p>
+
+                        <?php
+                        if ( $pr_tier['mod'] !== 'sharp' ) :
+                            if ( $pr_tier['mod'] === 'rookie' ) {
+                                $target_label     = 'Trending';
+                                $target_decidable = 10;
+                                $target_rate      = 0.50;
+                                $rate_pct         = $pr_rate !== null ? round( $pr_rate * 100, 1 ) : null;
+                                $progress_pct     = min( 100, (int) round( ( $pr_decidable / $target_decidable ) * 100 ) );
+                            } elseif ( $pr_tier['mod'] === 'trending' ) {
+                                $target_label     = 'Solid';
+                                $target_decidable = 10;
+                                $target_rate      = 0.55;
+                                $rate_pct         = $pr_rate !== null ? round( $pr_rate * 100, 1 ) : null;
+                                $progress_pct     = $pr_rate !== null ? min( 100, (int) round( ( $pr_rate / $target_rate ) * 100 ) ) : 0;
+                            } else {
+                                $target_label     = 'Sharp';
+                                $target_decidable = 20;
+                                $target_rate      = 0.60;
+                                $rate_pct         = $pr_rate !== null ? round( $pr_rate * 100, 1 ) : null;
+                                $progress_pct     = $pr_rate !== null
+                                    ? min( 100, (int) round( ( $pr_rate / $target_rate ) * 100 ) )
+                                    : min( 100, (int) round( ( $pr_decidable / $target_decidable ) * 100 ) );
+                            }
+                        ?>
+                        <div class="acct-tier-progress">
+                            <div class="acct-tier-progress__header">
+                                <span class="acct-tier-progress__label">Progress to <strong><?php echo esc_html( $target_label ); ?></strong></span>
+                                <span class="acct-tier-progress__pct"><?php echo esc_html( $progress_pct . '%' ); ?></span>
+                            </div>
+                            <div class="acct-tier-progress__bar">
+                                <div class="acct-tier-progress__fill" style="width:<?php echo esc_attr( $progress_pct ); ?>%"></div>
+                            </div>
+                            <ul class="acct-tier-progress__reqs">
+                                <?php if ( $pr_tier['mod'] === 'rookie' ) : ?>
+                                    <li class="<?php echo $pr_decidable >= 10 ? 'req--met' : ''; ?>">
+                                        <?php echo $pr_decidable >= 10 ? '✓' : '○'; ?> <?php echo esc_html( $pr_decidable ); ?>/10 settled picks
+                                    </li>
+                                    <li class="<?php echo ( $pr_rate !== null && $pr_rate >= 0.50 ) ? 'req--met' : ''; ?>">
+                                        <?php echo ( $pr_rate !== null && $pr_rate >= 0.50 ) ? '✓' : '○'; ?> ≥50% hit rate<?php echo $rate_pct !== null ? ' (' . esc_html( $rate_pct ) . '%)' : ''; ?>
+                                    </li>
+                                <?php elseif ( $pr_tier['mod'] === 'trending' ) : ?>
+                                    <li class="req--met">✓ ≥10 settled picks (<?php echo esc_html( $pr_decidable ); ?>)</li>
+                                    <li class="<?php echo ( $pr_rate !== null && $pr_rate >= 0.55 ) ? 'req--met' : ''; ?>">
+                                        <?php echo ( $pr_rate !== null && $pr_rate >= 0.55 ) ? '✓' : '○'; ?> ≥55% hit rate<?php echo $rate_pct !== null ? ' (' . esc_html( $rate_pct ) . '%)' : ''; ?>
+                                    </li>
+                                    <li class="<?php echo $pr_profitable ? 'req--met' : ''; ?>">
+                                        <?php echo $pr_profitable ? '✓' : '○'; ?> Positive ROI<?php echo $pr_roi !== null ? ' (' . esc_html( ( $pr_roi >= 0 ? '+' : '' ) . $pr_roi . '%' ) . ')' : ''; ?>
+                                    </li>
+                                <?php else : ?>
+                                    <li class="<?php echo $pr_decidable >= 20 ? 'req--met' : ''; ?>">
+                                        <?php echo $pr_decidable >= 20 ? '✓' : '○'; ?> <?php echo esc_html( $pr_decidable ); ?>/20 settled picks
+                                    </li>
+                                    <li class="<?php echo ( $pr_rate !== null && $pr_rate >= 0.60 ) ? 'req--met' : ''; ?>">
+                                        <?php echo ( $pr_rate !== null && $pr_rate >= 0.60 ) ? '✓' : '○'; ?> ≥60% hit rate<?php echo $rate_pct !== null ? ' (' . esc_html( $rate_pct ) . '%)' : ''; ?>
+                                    </li>
+                                    <li class="<?php echo $pr_profitable ? 'req--met' : ''; ?>">
+                                        <?php echo $pr_profitable ? '✓' : '○'; ?> Positive ROI<?php echo $pr_roi !== null ? ' (' . esc_html( ( $pr_roi >= 0 ? '+' : '' ) . $pr_roi . '%' ) . ')' : ''; ?>
+                                    </li>
+                                <?php endif; ?>
+                            </ul>
+                        </div>
+                        <?php endif; ?>
+
+                        <?php
+                        $sport_breakdown = statsight_get_user_pick_record_by_sport( $user->ID );
+                        $sport_labels    = [
+                            'basketball_nba'         => 'NBA',
+                            'americanfootball_nfl'   => 'NFL',
+                            'baseball_mlb'           => 'MLB',
+                            'icehockey_nhl'          => 'NHL',
+                            'basketball_ncaab'       => 'NCAAB',
+                            'americanfootball_ncaaf' => 'NCAAF',
+                            'mma_mixed_martial_arts' => 'MMA',
+                            'soccer_epl'             => 'EPL',
+                            'soccer_usa_mls'         => 'MLS',
+                        ];
+                        if ( count( $sport_breakdown ) > 0 ) :
+                        ?>
+                        <details class="acct-sport-breakdown">
+                            <summary class="acct-sport-breakdown__toggle">By Sport</summary>
+                            <table class="acct-sport-breakdown__table">
+                                <thead>
+                                    <tr>
+                                        <th>Sport</th><th>W</th><th>L</th><th>Push</th><th>Hit%</th><th>ROI</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ( $sport_breakdown as $row ) :
+                                        $s_label   = $sport_labels[ $row['sport'] ] ?? ucwords( str_replace( '_', ' ', $row['sport'] ) );
+                                        $s_rate    = $row['hit_rate'] !== null ? round( $row['hit_rate'] * 100, 1 ) . '%' : '—';
+                                        $s_roi     = $row['roi'] !== null ? ( $row['roi'] >= 0 ? '+' : '' ) . $row['roi'] . '%' : '—';
+                                        $s_roi_cls = $row['roi'] !== null ? ( $row['roi'] > 0 ? 'sport-roi--pos' : ( $row['roi'] < 0 ? 'sport-roi--neg' : '' ) ) : '';
+                                    ?>
+                                    <tr>
+                                        <td><?php echo esc_html( $s_label ); ?></td>
+                                        <td class="sport-w"><?php echo esc_html( $row['wins'] ); ?></td>
+                                        <td class="sport-l"><?php echo esc_html( $row['losses'] ); ?></td>
+                                        <td><?php echo esc_html( $row['pushes'] ); ?></td>
+                                        <td><?php echo esc_html( $s_rate ); ?></td>
+                                        <td class="<?php echo esc_attr( $s_roi_cls ); ?>"><?php echo esc_html( $s_roi ); ?></td>
+                                    </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </details>
+                        <?php endif; ?>
+                    </div>
+
+                    <a href="<?php echo esc_url( $pr_profile_url ); ?>" class="acct-btn acct-btn--ghost">
+                        View My Profile &rarr;
+                    </a>
+                </section>
+
+                <!-- Following card -->
+                <section class="acct-card" id="acct-following" data-acct-tab="stats">
+                    <h2 class="acct-card__title">Following</h2>
+                    <p class="acct-card__sub">Users whose public watchlists you&rsquo;re following.</p>
+                    <div id="acct-following-list">
+                        <p class="acct-loading">Loading&hellip;</p>
+                    </div>
+                    <div id="acct-following-footer" hidden></div>
+                </section>
+
+                <!-- Delete account card -->
+                <section class="acct-card acct-card--danger" id="acct-danger" data-acct-tab="account">
+                    <p class="acct-danger-label">Delete Account</p>
+                    <p class="acct-danger-desc">
+                        Schedules your account for deletion in 30 days. You can reactivate within that window via the link in your confirmation email.
+                        <?php if ( $plan !== 'free' ) : ?>
+                            Your <?php echo esc_html( $plan_label ); ?> plan will be cancelled immediately.
+                        <?php endif; ?>
+                    </p>
+                    <div class="acct-form-footer">
+                        <button class="acct-btn acct-btn--danger" id="acct-delete-btn">
+                            Delete My Account
+                        </button>
+                    </div>
+                </section>
 
             </div><!-- .acct-col--right -->
 
@@ -582,6 +573,36 @@ asort( $all_books );
 <script>
 (function () {
     'use strict';
+
+    // ── Mobile account tabs ───────────────────────────────────────────────────
+    const tabs     = document.querySelectorAll('.acct-tab');
+    const cards    = document.querySelectorAll('[data-acct-tab]');
+    const MOBILE   = () => window.innerWidth < 900;
+    let activeTab  = 'account';
+
+    function applyTabs() {
+        if (!MOBILE()) {
+            cards.forEach(c => c.style.display = '');
+            return;
+        }
+        cards.forEach(c => {
+            c.style.display = c.dataset.acctTab === activeTab ? '' : 'none';
+        });
+    }
+
+    tabs.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            activeTab = this.dataset.tab;
+            tabs.forEach(t => {
+                t.classList.toggle('acct-tab--active', t.dataset.tab === activeTab);
+                t.setAttribute('aria-selected', t.dataset.tab === activeTab ? 'true' : 'false');
+            });
+            applyTabs();
+        });
+    });
+
+    applyTabs();
+    window.addEventListener('resize', applyTabs);
 
     const nonce    = <?php echo wp_json_encode( wp_create_nonce( 'statsight_account' ) ); ?>;
     const ajaxUrl  = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
