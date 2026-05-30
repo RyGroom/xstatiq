@@ -738,12 +738,15 @@ asort( $all_books );
     const SPORTS = [
         { key: 'all',                    label: 'All Sports' },
         { key: 'basketball_nba',         label: 'NBA' },
+        { key: 'basketball_wnba',        label: 'WNBA' },
         { key: 'americanfootball_nfl',   label: 'NFL' },
         { key: 'baseball_mlb',           label: 'MLB' },
         { key: 'icehockey_nhl',          label: 'NHL' },
         { key: 'basketball_ncaab',       label: 'NCAAB' },
         { key: 'americanfootball_ncaaf', label: 'NCAAF' },
         { key: 'mma_mixed_martial_arts', label: 'MMA' },
+        { key: 'soccer_epl',             label: 'EPL' },
+        { key: 'soccer_usa_mls',         label: 'MLS' },
     ];
 
     const rulesList  = document.getElementById('notif-rules-list');

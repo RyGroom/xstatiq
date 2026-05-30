@@ -6124,7 +6124,9 @@ function statsight_record_odds_snapshot( string $event_id, array $props, ?string
         }
         foreach ( $players as $player => $lines ) {
             // Look up the live stat for this player+market if available.
-            $stat_val = $live_stats[ $player ][ $market_key ] ?? null;
+            $stat_val = isset( $live_stats[ $player ][ $market_key ] )
+                ? (int) round( $live_stats[ $player ][ $market_key ] )
+                : null;
 
             foreach ( $lines as $line_key => $books ) {
                 foreach ( $books as $book_key => $odds ) {
@@ -6329,13 +6331,14 @@ function statsight_ajax_get_odds_history(): void {
     $player     = isset( $_GET['player'] )      ? sanitize_text_field( $_GET['player'] )     : '';
     $line       = isset( $_GET['line'] )        ? sanitize_text_field( $_GET['line'] )       : '';
     $book_key   = isset( $_GET['book_key'] )    ? sanitize_key( $_GET['book_key'] )          : '';
+    $limit      = isset( $_GET['limit'] )       ? min( 20, max( 1, (int) $_GET['limit'] ) )  : 20;
 
     if ( empty( $event_id ) || empty( $market_key ) || empty( $player ) || empty( $book_key ) ) {
         wp_send_json_error( [ 'message' => 'Missing required parameters.' ], 400 );
         return;
     }
 
-    $cache_key = 'statsight_hist2_' . md5( "{$event_id}|{$market_key}|{$player}|{$line}|{$book_key}" );
+    $cache_key = 'statsight_hist2_' . md5( "{$event_id}|{$market_key}|{$player}|{$line}|{$book_key}|{$limit}" );
     $cached    = get_transient( $cache_key );
     if ( false !== $cached ) {
         wp_send_json_success( $cached );
@@ -6360,8 +6363,8 @@ function statsight_ajax_get_odds_history(): void {
                AND line       = %s
                AND book_key   = %s
              ORDER BY recorded_at DESC
-             LIMIT 20",
-            $event_id, $market_key, $player, $line_norm, $book_key
+             LIMIT %d",
+            $event_id, $market_key, $player, $line_norm, $book_key, $limit
         ),
         ARRAY_A
     );
@@ -6395,8 +6398,8 @@ function statsight_ajax_get_odds_history(): void {
                        AND line       = %s
                        AND book_key   = %s
                      ORDER BY recorded_at DESC
-                     LIMIT 20",
-                    $event_id, $market_key, $player, $closest_line, $book_key
+                     LIMIT %d",
+                    $event_id, $market_key, $player, $closest_line, $book_key, $limit
                 ),
                 ARRAY_A
             );

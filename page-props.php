@@ -5161,7 +5161,8 @@ function fmtMarket(key) {
                     position: 'right',
                     ticks: {
                         color:    '#6b7280',
-                        callback: v => v,
+                        callback: v => Number.isInteger(v) ? v : null,
+                        stepSize: 1,
                     },
                     grid: { drawOnChartArea: false },
                 };
@@ -5177,6 +5178,25 @@ function fmtMarket(key) {
                     plugins: {
                         legend: {
                             display: hasStats,
+                            onClick: function (e, legendItem, legend) {
+                                const chart = legend.chart;
+                                const index = legendItem.datasetIndex;
+                                // Default toggle behaviour
+                                if (chart.isDatasetVisible(index)) {
+                                    chart.hide(index);
+                                    legendItem.hidden = true;
+                                } else {
+                                    chart.show(index);
+                                    legendItem.hidden = false;
+                                }
+                                // Show/hide the yStat axis based on whether the stat dataset is visible
+                                const statDatasetIndex = chart.data.datasets.findIndex(d => d.yAxisID === 'yStat');
+                                if (statDatasetIndex !== -1) {
+                                    const statVisible = chart.isDatasetVisible(statDatasetIndex);
+                                    chart.options.scales.yStat.display = statVisible;
+                                    chart.update();
+                                }
+                            },
                         },
                         tooltip: {
                             callbacks: {
@@ -5759,6 +5779,7 @@ function fmtMarket(key) {
                 player:     player,
                 line:       lineVal,
                 book_key:   bk,
+                limit:      window.innerWidth < 640 ? 10 : 20,
             });
             fetch(statsightAjax.url + '?' + histParams.toString())
                 .then(r => r.json())
