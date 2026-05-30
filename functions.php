@@ -5985,7 +5985,7 @@ function statsight_fetch_and_cache_props( string $sport, string $event_id, array
 
     // Write history snapshot then warm the cache.
     statsight_record_odds_snapshot( $event_id, $props, $data['commence_time'] ?? null, $live_stats );
-    set_transient( 'statsight_props2_' . $event_id, $payload, 6 * MINUTE_IN_SECONDS );
+    set_transient( 'statsight_props2_' . $event_id, $payload, 1 * MINUTE_IN_SECONDS );
 
     return $payload;
 }
@@ -8687,13 +8687,18 @@ function statsight_cron_send_notifications(): void {
 
     error_log( '[Statsight Notif] events found: ' . count( $all_events ) );
 
-    // Load props payloads for every event that is cached.
-    // We don't trigger fresh API fetches here — rely on the props cron.
+    // Load props for every event — fetch fresh from API if cache is cold.
+    // Arbitrage windows close fast so we always want current data.
     $payloads = []; // event_id => payload
     foreach ( $all_events as $event_id => $event ) {
         $cached = get_transient( 'statsight_props2_' . $event_id );
         if ( $cached ) {
             $payloads[ $event_id ] = $cached;
+        } else {
+            $fetched = statsight_fetch_and_cache_props( $event['sport'], $event_id );
+            if ( $fetched && ! is_wp_error( $fetched ) ) {
+                $payloads[ $event_id ] = $fetched;
+            }
         }
     }
 
