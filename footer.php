@@ -42,7 +42,7 @@
                         &copy; <?php echo esc_html( date( 'Y' ) ); ?> xstatiq. All rights reserved.
                         <a href="<?php echo esc_url( home_url( '/privacy/' ) ); ?>">Privacy Policy</a> &middot;
                         <a href="<?php echo esc_url( home_url( '/terms/' ) ); ?>">Terms of Service</a> &middot;
-                        <a href="<?php echo esc_url( home_url( '/responsible-gambling/' ) ); ?>">Responsible Gambling</a>
+                        <a href="<?php echo esc_url( home_url( '/responsible-gambling/' ) ); ?>">Responsible Gaming</a>
                     </p>
                 </div>
 

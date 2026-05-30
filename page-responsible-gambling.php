@@ -92,7 +92,20 @@ get_header();
             </section>
 
             <section class="legal-section">
-                <h2>9. Contact Us</h2>
+                <h2>9. Data Accuracy and Limitation of Liability</h2>
+                <p>Odds and prop data displayed on xstatiq are sourced from third-party providers and licensed sportsbooks. While we make reasonable efforts to display current information, <strong>odds are not guaranteed to be live or up-to-date in real time</strong>. Data may be delayed, incomplete, or subject to change without notice due to factors outside our control, including API latency, sportsbook updates, and market suspensions.</p>
+                <p>xstatiq expressly disclaims all liability for:</p>
+                <ul>
+                    <li>Any betting decisions made based on odds or data displayed on this platform</li>
+                    <li>Financial losses arising from reliance on information provided by xstatiq</li>
+                    <li>Inaccuracies, delays, or omissions in odds data</li>
+                    <li>Any discrepancy between odds displayed on xstatiq and those available at a sportsbook at the time a bet is placed</li>
+                </ul>
+                <p>Always verify current odds directly with your sportsbook before placing any wager. xstatiq is not responsible for any difference between displayed odds and live sportsbook odds.</p>
+            </section>
+
+            <section class="legal-section">
+                <h2>10. Contact Us</h2>
                 <p>If you have questions about responsible gambling or our policies, please contact us at <a href="mailto:info@xstatiq.io">info@xstatiq.io</a>.</p>
             </section>
 
