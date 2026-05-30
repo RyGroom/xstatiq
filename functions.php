@@ -1322,19 +1322,30 @@ function statsight_cron_refresh_props(): void {
             $events = array_merge( ...array_column( $cached_result['days'], 'events' ) );
         }
 
-        // Fetch props for each event and record a history snapshot every run.
-        // If the props cache is warm, snapshot from cached data (no API call).
-        // If the cache has expired, fetch fresh data (which also records the snapshot).
-        // Sleep 1s between live API calls to avoid bursting the rate limit.
+        // Only fetch fresh props for events that are live or starting within 3 hours.
+        // Games further out don't have meaningful arb opportunities and slow the cron.
+        $now        = time();
+        $horizon    = $now + ( 8 * HOUR_IN_SECONDS );
+
         foreach ( $events as $event ) {
-            $event_id = $event['id'] ?? '';
-            if ( empty( $event_id ) ) {
-                continue;
+            $event_id      = $event['id'] ?? '';
+            $commence_time = $event['commence_time'] ?? '';
+            if ( empty( $event_id ) ) continue;
+
+            $commence_ts = $commence_time ? strtotime( $commence_time ) : 0;
+            $is_live     = $commence_ts > 0 && $commence_ts <= $now;
+            $is_soon     = $commence_ts > 0 && $commence_ts <= $horizon;
+
+            if ( $is_live || $is_soon ) {
+                // Live or starting within 3 hours — always fetch fresh.
+                statsight_fetch_and_cache_props( $sport, $event_id );
+            } else {
+                // Further out — snapshot from cache if warm, skip if cold.
+                $cached = get_transient( 'statsight_props2_' . $event_id );
+                if ( $cached ) {
+                    statsight_record_odds_snapshot( $event_id, $cached['props'] ?? [], $commence_time );
+                }
             }
-            // Always fetch fresh from the API on each cron run so props are
-            // never stale for arbitrage detection and history snapshots.
-            statsight_fetch_and_cache_props( $sport, $event_id );
-            sleep( 1 );
         }
     }
 }
