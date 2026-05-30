@@ -1331,13 +1331,10 @@ function statsight_cron_refresh_props(): void {
             if ( empty( $event_id ) ) {
                 continue;
             }
-            $cached = get_transient( 'statsight_props2_' . $event_id );
-            if ( false === $cached ) {
-                statsight_fetch_and_cache_props( $sport, $event_id );
-            } else {
-                // Cache is warm — record a snapshot from existing data without hitting the API.
-                statsight_record_odds_snapshot( $event_id, $cached['props'] ?? [], $event['commence_time'] ?? null );
-            }
+            // Always fetch fresh from the API on each cron run so props are
+            // never stale for arbitrage detection and history snapshots.
+            statsight_fetch_and_cache_props( $sport, $event_id );
+            sleep( 1 );
         }
     }
 }
@@ -4935,7 +4932,7 @@ function statsight_ajax_get_all_props(): void {
         }
     }
 
-    set_transient( $cache_key, $result, 2 * MINUTE_IN_SECONDS );
+    set_transient( $cache_key, $result, 1 * MINUTE_IN_SECONDS );
     wp_send_json_success( $result );
 }
 add_action( 'wp_ajax_statsight_get_all_props',        'statsight_ajax_get_all_props' );
