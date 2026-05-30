@@ -12,7 +12,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="xstatiq">
-    <link rel="manifest" href="<?php echo esc_url( get_template_directory_uri() . '/manifest.json' ); ?>">
+    <link rel="manifest" href="<?php echo esc_url( home_url( '/?statsight_manifest=1' ) ); ?>">
     <link rel="apple-touch-icon" href="<?php echo esc_url( get_template_directory_uri() . '/assets/icons/icon-192.png' ); ?>">
     <?php wp_head(); ?>
 </head>

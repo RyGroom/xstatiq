@@ -10294,3 +10294,42 @@ add_filter( 'woocommerce_add_notice', function ( string $message, string $notice
     }
     return $message;
 }, 10, 2 );
+
+// ── Dynamic PWA manifest ───────────────────────────────────────────────────
+add_action( 'template_redirect', function (): void {
+    if ( ! isset( $_GET['statsight_manifest'] ) ) {
+        return;
+    }
+    $icon_base = get_template_directory_uri() . '/assets/icons';
+    $manifest  = [
+        'name'             => 'xstatiq',
+        'short_name'       => 'xstatiq',
+        'description'      => 'Real-time prop betting odds, best value finder, and arbitrage detection.',
+        'start_url'        => home_url( '/props/' ),
+        'scope'            => home_url( '/' ),
+        'display'          => 'standalone',
+        'orientation'      => 'portrait-primary',
+        'background_color' => '#0a0c10',
+        'theme_color'      => '#0a0c10',
+        'icons'            => [
+            [
+                'src'     => $icon_base . '/icon-192.png',
+                'sizes'   => '192x192',
+                'type'    => 'image/png',
+                'purpose' => 'any maskable',
+            ],
+            [
+                'src'     => $icon_base . '/icon-512.png',
+                'sizes'   => '512x512',
+                'type'    => 'image/png',
+                'purpose' => 'any maskable',
+            ],
+        ],
+        'categories'  => [ 'sports', 'finance' ],
+        'screenshots' => [],
+    ];
+    header( 'Content-Type: application/manifest+json' );
+    header( 'Cache-Control: no-cache' );
+    echo wp_json_encode( $manifest, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT );
+    exit;
+} );
