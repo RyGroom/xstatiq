@@ -3,7 +3,7 @@ Theme Name: xstatiq
 Theme URI: https://statsight.com/
 Author: Statsight
 Description: Sports prop aggregator — compare betting odds across FanDuel, Fanatics, Bet365, Caesars, and more.
-Version: 9.41
+Version: 9.42
 Text Domain: statsight
 */
 
@@ -535,16 +535,19 @@ img { max-width: 100%; height: auto; }
     margin: 0;
 }
 
-.site-footer__copy {
+.site-footer__copy,
+.site-footer__links {
     font-size: 0.75rem;
     color: var(--color-text-muted);
     margin: 0;
 }
-.site-footer__copy a {
+.site-footer__copy a,
+.site-footer__links a {
     color: var(--color-text-muted);
     text-decoration: underline;
 }
-.site-footer__copy a:hover {
+.site-footer__copy a:hover,
+.site-footer__links a:hover {
     color: var(--color-text);
 }
 

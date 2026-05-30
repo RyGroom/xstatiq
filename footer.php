@@ -40,6 +40,8 @@
                     </p>
                     <p class="site-footer__copy">
                         &copy; <?php echo esc_html( date( 'Y' ) ); ?> xstatiq. All rights reserved.
+                    </p>
+                    <p class="site-footer__links">
                         <a href="<?php echo esc_url( home_url( '/privacy/' ) ); ?>">Privacy Policy</a> &middot;
                         <a href="<?php echo esc_url( home_url( '/terms/' ) ); ?>">Terms of Service</a> &middot;
                         <a href="<?php echo esc_url( home_url( '/responsible-gambling/' ) ); ?>">Responsible Gaming</a>
