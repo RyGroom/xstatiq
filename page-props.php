@@ -1183,8 +1183,13 @@ function fmtMarket(key) {
                         applyTeamLogos(container,  liveJson.data.logos ?? {});
                     }
                     applyRestDays(container, sportKey);
-                    // Background arb count — updates badge without rendering the table.
-                    if (statsightAjax.plan === 'sharp') prefetchArbCount(panel, sportKey);
+                    // Background arb count — updates badge on load and every 60s.
+                    if (statsightAjax.plan === 'sharp') {
+                        prefetchArbCount(panel, sportKey);
+                        setInterval(function () {
+                            if (!document.hidden) prefetchArbCount(panel, sportKey);
+                        }, 60 * 1000);
+                    }
                 }
                 container.dataset.loaded = 'true';
             })
@@ -1234,10 +1239,7 @@ function fmtMarket(key) {
                         });
                     });
                 });
-                // Don't overwrite a non-zero badge already set by buildArbTable.
-                const existing = arbBtn.querySelector('.arb-count-badge');
-                if (existing && !existing.classList.contains('arb-count-badge--empty')) return;
-                existing?.remove();
+                arbBtn.querySelector('.arb-count-badge')?.remove();
                 const badge = document.createElement('span');
                 badge.className   = 'arb-count-badge' + (count === 0 ? ' arb-count-badge--empty' : '');
                 badge.textContent = count;
