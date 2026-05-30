@@ -1183,12 +1183,54 @@ function fmtMarket(key) {
                         applyTeamLogos(container,  liveJson.data.logos ?? {});
                     }
                     applyRestDays(container, sportKey);
+                    // Background arb count — updates badge without rendering the table.
+                    if (statsightAjax.plan === 'sharp') prefetchArbCount(panel, sportKey);
                 }
                 container.dataset.loaded = 'true';
             })
             .catch(function () {
                 container.dataset.loaded = 'true';
             });
+    }
+
+    function prefetchArbCount(panel, sportKey) {
+        const arbBtn = panel?.querySelector('.panel-view-btn[data-view="arb"]');
+        if (!arbBtn) return;
+        fetch(`${statsightAjax.url}?${new URLSearchParams({ action: 'statsight_get_all_props', nonce: statsightAjax.nonce, sport: sportKey })}`)
+            .then(r => r.json())
+            .then(function (json) {
+                if (!json.success) return;
+                const allProps = json.data;
+                let count = 0;
+                Object.entries(allProps).forEach(function ([eventId, eventData]) {
+                    if (isEventEnded(sportKey, eventId)) return;
+                    const books          = eventData.books || {};
+                    const allBkList      = Object.keys(books);
+                    const activeBooks    = statsightAjax.activeBooks;
+                    const filteredBkList = activeBooks ? allBkList.filter(bk => activeBooks.includes(bk)) : allBkList;
+                    const bkList         = filteredBkList.length > 0 ? filteredBkList : allBkList;
+                    Object.entries(eventData.markets || {}).forEach(function ([marketKey, byPlayer]) {
+                        Object.entries(byPlayer).forEach(function ([player, byLine]) {
+                            Object.entries(byLine).forEach(function ([lineVal, bkData]) {
+                                let bestOver = -Infinity, bestUnder = -Infinity;
+                                bkList.forEach(bk => {
+                                    const o = bkData[bk]?.over  ?? null;
+                                    const u = bkData[bk]?.under ?? null;
+                                    if (o !== null) bestOver  = Math.max(bestOver,  oddsToImplied(o));
+                                    if (u !== null) bestUnder = Math.max(bestUnder, oddsToImplied(u));
+                                });
+                                if (bestOver > 0 && bestUnder > 0 && (bestOver + bestUnder) < 1) count++;
+                            });
+                        });
+                    });
+                });
+                arbBtn.querySelector('.arb-count-badge')?.remove();
+                const badge = document.createElement('span');
+                badge.className   = 'arb-count-badge' + (count === 0 ? ' arb-count-badge--empty' : '');
+                badge.textContent = count;
+                arbBtn.appendChild(badge);
+            })
+            .catch(() => {});
     }
 
     // ── Game Detail / Props View ───────────────────────────────────────────
