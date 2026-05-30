@@ -1212,14 +1212,24 @@ function fmtMarket(key) {
                     Object.entries(eventData.markets || {}).forEach(function ([marketKey, byPlayer]) {
                         Object.entries(byPlayer).forEach(function ([player, byLine]) {
                             Object.entries(byLine).forEach(function ([lineVal, bkData]) {
-                                let bestOver = -Infinity, bestUnder = -Infinity;
-                                bkList.forEach(bk => {
-                                    const o = bkData[bk]?.over  ?? null;
-                                    const u = bkData[bk]?.under ?? null;
-                                    if (o !== null) bestOver  = Math.max(bestOver,  oddsToImplied(o));
-                                    if (u !== null) bestUnder = Math.max(bestUnder, oddsToImplied(u));
+                                let bestOverOdds = null, bestOverScore = -Infinity;
+                                let bestUnderOdds = null, bestUnderScore = -Infinity;
+                                bkList.forEach(function (bk) {
+                                    const entry = bkData[bk];
+                                    if (!entry) return;
+                                    if (entry.over != null) {
+                                        const s = oddsScore(entry.over);
+                                        if (s > bestOverScore)  { bestOverScore  = s; bestOverOdds  = entry.over; }
+                                    }
+                                    if (entry.under != null) {
+                                        const s = oddsScore(entry.under);
+                                        if (s > bestUnderScore) { bestUnderScore = s; bestUnderOdds = entry.under; }
+                                    }
                                 });
-                                if (bestOver > 0 && bestUnder > 0 && (bestOver + bestUnder) < 1) count++;
+                                if (bestOverOdds === null || bestUnderOdds === null) return;
+                                const overImpl  = americanToImplied(bestOverOdds);
+                                const underImpl = americanToImplied(bestUnderOdds);
+                                if (overImpl + underImpl < 1 && overImpl >= 0.05 && underImpl >= 0.05) count++;
                             });
                         });
                     });
