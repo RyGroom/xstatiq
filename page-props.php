@@ -1234,7 +1234,10 @@ function fmtMarket(key) {
                         });
                     });
                 });
-                arbBtn.querySelector('.arb-count-badge')?.remove();
+                // Don't overwrite a non-zero badge already set by buildArbTable.
+                const existing = arbBtn.querySelector('.arb-count-badge');
+                if (existing && !existing.classList.contains('arb-count-badge--empty')) return;
+                existing?.remove();
                 const badge = document.createElement('span');
                 badge.className   = 'arb-count-badge' + (count === 0 ? ' arb-count-badge--empty' : '');
                 badge.textContent = count;
