@@ -70,14 +70,14 @@ $sports = $result['sports'];
                         </div>
                     </div>
                     <div class="bv-control-group">
-                        <label class="bv-control-label" for="bv-min-odds">Min lowest odds</label>
+                        <label class="bv-control-label" for="bv-min-odds">Min odds</label>
                         <div class="bv-number-input-wrap">
                             <input type="number" class="bv-number-input" id="bv-min-odds" value="-1000" min="-1000" max="500" step="25">
                             <span class="bv-number-unit">pts</span>
                         </div>
                     </div>
                     <div class="bv-control-group">
-                        <label class="bv-control-label" for="bv-max-odds">Max lowest odds</label>
+                        <label class="bv-control-label" for="bv-max-odds">Max odds</label>
                         <div class="bv-number-input-wrap">
                             <input type="number" class="bv-number-input" id="bv-max-odds" value="1000" min="-500" max="2000" step="25">
                             <span class="bv-number-unit">pts</span>
