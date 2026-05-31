@@ -3,7 +3,7 @@ Theme Name: xstatiq
 Theme URI: https://statsight.com/
 Author: Statsight
 Description: Sports prop aggregator — compare betting odds across FanDuel, Fanatics, Bet365, Caesars, and more.
-Version: 9.42
+Version: 9.48
 Text Domain: statsight
 */
 
@@ -888,7 +888,34 @@ img { max-width: 100%; height: auto; }
 
 .panel-arb-view[hidden] { display: none; }
 
-.arb-view__table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.arb-view__table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.arb-view__table th:first-child,
+.arb-view__table td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: var(--color-surface-2);
+}
+
+@media (max-width: 768px) {
+    .arb-view__table-wrap {
+        mask-image: linear-gradient(to right, black calc(100% - 3rem), transparent 100%);
+        -webkit-mask-image: linear-gradient(to right, black calc(100% - 3rem), transparent 100%);
+    }
+    .arb-view__table .arb-col-player {
+        max-width: 90px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .arb-view__table th:first-child {
+        max-width: 90px;
+    }
+}
 
 .arb-col-pct {
     font-weight: 700;
@@ -896,6 +923,20 @@ img { max-width: 100%; height: auto; }
     white-space: nowrap;
 }
 
+td.arb-col-player,
+td.sharp-col-player {
+    cursor: pointer;
+    color: var(--color-primary) !important;
+    text-decoration: underline;
+    text-decoration-color: transparent;
+    text-underline-offset: 2px;
+    transition: text-decoration-color 0.15s;
+}
+
+td.arb-col-player:hover,
+td.sharp-col-player:hover {
+    text-decoration-color: var(--color-primary);
+}
 .arb-col-market  { font-size: 0.8rem; color: var(--color-text-muted); }
 .arb-col-matchup { font-size: 0.75rem; color: var(--color-text-dim); white-space: nowrap; }
 .arb-col-line    { text-align: center; }
@@ -904,7 +945,8 @@ img { max-width: 100%; height: auto; }
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    white-space: nowrap;
 }
 
 .arb-side {
@@ -1089,6 +1131,30 @@ img { max-width: 100%; height: auto; }
 .sharp-view__table-wrap {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+}
+
+.sharp-view__table th:first-child,
+.sharp-view__table td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: var(--color-surface-2);
+}
+
+@media (max-width: 768px) {
+    .sharp-view__table-wrap {
+        mask-image: linear-gradient(to right, black calc(100% - 3rem), transparent 100%);
+        -webkit-mask-image: linear-gradient(to right, black calc(100% - 3rem), transparent 100%);
+    }
+    .sharp-view__table .sharp-col-player {
+        max-width: 90px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .sharp-view__table th:first-child {
+        max-width: 90px;
+    }
 }
 
 .sharp-col-move--up   { color: var(--color-best); font-weight: 700; }

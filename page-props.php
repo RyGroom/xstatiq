@@ -2466,7 +2466,7 @@ function fmtMarket(key) {
         const rows = arbs.map(function (a) {
             const pct = a.arbPct.toFixed(2);
             return `
-                <tr data-player="${escHtml(a.player)}" data-event-id="${escHtml(a.eventId)}" class="arb-row">
+                <tr data-player="${escHtml(a.player)}" data-event-id="${escHtml(a.eventId)}" data-market="${escHtml(a.marketKey)}" class="arb-row">
                     <td class="arb-col-player">${escHtml(a.player)}</td>
                     <td class="arb-col-market">${escHtml(a.marketLabel)}</td>
                     <td class="arb-col-matchup"><button class="matchup-link">${escHtml(a.matchup)}</button></td>
@@ -2490,7 +2490,8 @@ function fmtMarket(key) {
                     </td>
                 </tr>
                 <tr class="arb-calc-row" hidden>
-                    <td colspan="7">
+                    <td></td>
+                    <td colspan="6">
                         <div class="arb-calc-wrap">
                             <label class="arb-calc-label">Total stake
                                 <span class="arb-calc-currency">$</span><input
@@ -2535,7 +2536,14 @@ function fmtMarket(key) {
                 const isOpen  = !calcRow.hidden;
                 calcRow.hidden = isOpen;
                 btn.textContent = isOpen ? 'Calc' : 'Close';
-                if (!isOpen) calcStakes(calcRow.querySelector('.arb-stake-input'));
+                if (!isOpen) {
+                    calcStakes(calcRow.querySelector('.arb-stake-input'));
+                    // On mobile, scroll table back to left so stake input is visible.
+                    const wrap = container.querySelector('.arb-view__table-wrap');
+                    if (wrap && window.innerWidth < 768) {
+                        wrap.scrollTo({ left: 0, behavior: 'smooth' });
+                    }
+                }
             });
         });
 
@@ -2632,7 +2640,7 @@ function fmtMarket(key) {
             const deltaStr = `${sign}${parseFloat(m.delta).toFixed(1)}`;
             const label    = fmtMarket(m.market_key);
             return `
-                <tr data-player="${escHtml(m.player)}" data-event-id="${escHtml(m.event_id)}">
+                <tr data-player="${escHtml(m.player)}" data-event-id="${escHtml(m.event_id)}" data-market="${escHtml(m.market_key)}">
                     <td class="sharp-col-player">${escHtml(m.player)}</td>
                     <td class="sharp-col-market">${escHtml(label)}</td>
                     <td class="sharp-col-matchup"><button class="matchup-link">${escHtml(m.matchup)}</button></td>
@@ -3927,19 +3935,19 @@ function fmtMarket(key) {
         }
     }
 
-    // Delegated click on player name cells
+    // Delegated click on player name cells (props, arb, and sharp tables)
     document.addEventListener('click', function (e) {
-        const cell = e.target.closest('.col-player');
+        const cell = e.target.closest('.col-player, .arb-col-player, .sharp-col-player');
         if (!cell) return;
 
-        // Only trigger from props table rows (which have data-player), not event rows
         const row = cell.closest('tr[data-player]');
         if (!row) return;
 
         const playerName = row.dataset.player  || '';
         const eventId    = row.dataset.eventId || '';
         const marketKey  = row.dataset.market  || '';
-        const sport      = row.closest('[data-sport-key]')?.dataset.sportKey || '';
+        const sport      = row.closest('[data-sport-key]')?.dataset.sportKey
+                        || row.closest('.league-panel')?.dataset.sportKey || '';
         const propLine   = parseFloat(row.querySelector('.line-stepper__val')?.textContent.trim()) || null;
 
         // Sports with no ESPN gamelog / player history support — names are not clickable.
