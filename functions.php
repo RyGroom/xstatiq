@@ -5081,6 +5081,108 @@ function statsight_ajax_get_line_moves(): void {
 add_action( 'wp_ajax_statsight_get_line_moves', 'statsight_ajax_get_line_moves' );
 
 /**
+ * Return futures (outrights) odds for a sport across all bookmakers.
+ *
+ * Response: { books: string[], outcomes: { name: string, odds: { [book]: number } }[] }
+ */
+function statsight_ajax_get_futures(): void {
+    check_ajax_referer( 'statsight_events', 'nonce' );
+
+    $sport = isset( $_GET['sport'] ) ? sanitize_key( $_GET['sport'] ) : '';
+    if ( empty( $sport ) ) {
+        wp_send_json_error( [ 'message' => 'Missing sport.' ], 400 );
+    }
+
+    if ( ! defined( 'THE_ODDS_API_KEY' ) || empty( THE_ODDS_API_KEY ) ) {
+        wp_send_json_error( [ 'message' => 'API key not configured.' ], 500 );
+    }
+
+    // Futures live under separate sport keys, not as a market on the main sport key.
+    $futures_sport_map = [
+        'basketball_nba'        => 'basketball_nba_championship_winner',
+        'americanfootball_nfl'  => 'americanfootball_nfl_super_bowl_winner',
+        'baseball_mlb'          => 'baseball_mlb_world_series_winner',
+        'icehockey_nhl'         => 'icehockey_nhl_championship_winner',
+        'americanfootball_ncaaf'=> 'americanfootball_ncaaf_championship_winner',
+    ];
+
+    $futures_sport = $futures_sport_map[ $sport ] ?? null;
+    if ( ! $futures_sport ) {
+        wp_send_json_success( [ 'books' => [], 'outcomes' => [], 'unavailable' => true ] );
+    }
+
+    $cache_key = 'statsight_futures_' . $sport;
+    $cached    = get_transient( $cache_key );
+    if ( $cached !== false ) {
+        wp_send_json_success( $cached );
+    }
+
+    $url = 'https://api.the-odds-api.com/v4/sports/' . $futures_sport . '/odds?' . http_build_query( [
+        'apiKey'     => THE_ODDS_API_KEY,
+        'regions'    => 'us',
+        'markets'    => 'outrights',
+        'oddsFormat' => 'american',
+    ] );
+
+    $response = wp_remote_get( $url, [ 'timeout' => 15 ] );
+
+    if ( is_wp_error( $response ) || wp_remote_retrieve_response_code( $response ) !== 200 ) {
+        wp_send_json_error( [ 'message' => 'Failed to fetch futures from Odds API.' ], 502 );
+    }
+
+    statsight_record_quota( $response );
+
+    $data = json_decode( wp_remote_retrieve_body( $response ), true );
+    if ( ! is_array( $data ) ) {
+        wp_send_json_error( [ 'message' => 'Invalid response from Odds API.' ], 502 );
+    }
+
+    // Collect all bookmakers and outcomes across all returned events (futures groups).
+    $books_set   = [];
+    $outcomes    = [];
+    $sport_title = '';
+
+    foreach ( $data as $event ) {
+        if ( empty( $sport_title ) && ! empty( $event['sport_title'] ) ) {
+            $sport_title = $event['sport_title'];
+        }
+        foreach ( $event['bookmakers'] ?? [] as $bm ) {
+            $bk = $bm['key'];
+            foreach ( $bm['markets'] ?? [] as $market ) {
+                if ( ( $market['key'] ?? '' ) !== 'outrights' ) continue;
+                foreach ( $market['outcomes'] ?? [] as $outcome ) {
+                    $name = $outcome['name'] ?? '';
+                    if ( empty( $name ) ) continue;
+                    $books_set[ $bk ] = true;
+                    if ( ! isset( $outcomes[ $name ] ) ) {
+                        $outcomes[ $name ] = [ 'name' => $name, 'odds' => [] ];
+                    }
+                    $outcomes[ $name ]['odds'][ $bk ] = (int) $outcome['price'];
+                }
+            }
+        }
+    }
+
+    // Sort outcomes: best (highest) odds at any book first.
+    uasort( $outcomes, function ( $a, $b ) {
+        $best_a = ! empty( $a['odds'] ) ? max( $a['odds'] ) : -9999;
+        $best_b = ! empty( $b['odds'] ) ? max( $b['odds'] ) : -9999;
+        return $best_b <=> $best_a;
+    } );
+
+    $result = [
+        'title'    => $sport_title,
+        'books'    => array_keys( $books_set ),
+        'outcomes' => array_values( $outcomes ),
+    ];
+
+    set_transient( $cache_key, $result, 10 * MINUTE_IN_SECONDS );
+    wp_send_json_success( $result );
+}
+add_action( 'wp_ajax_statsight_get_futures',        'statsight_ajax_get_futures' );
+add_action( 'wp_ajax_nopriv_statsight_get_futures', 'statsight_ajax_get_futures' );
+
+/**
  * Returns prop market categories and their API market keys per sport group.
  * Each category maps to a tab inside the game detail view.
  *
@@ -10294,7 +10396,7 @@ add_filter( 'woocommerce_account_menu_items', function ( array $items ): array {
 // Prevent the "temporary password" notice from showing more than once.
 // WooCommerce's my-account shortcode can output it twice if the page
 // template renders the shortcode in multiple contexts.
-add_filter( 'woocommerce_add_notice', function ( string $message, string $notice_type ): string {
+add_filter( 'woocommerce_add_notice', function ( string $message, string $notice_type = 'notice' ): string {
     static $shown = false;
     if ( $notice_type === 'notice' && str_contains( $message, 'temporary password' ) ) {
         if ( $shown ) return '';
