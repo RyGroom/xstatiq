@@ -85,6 +85,7 @@ $first_key = ! empty( $sports ) ? $sports[0]['key'] : '';
                 <div class="panel-view-toggle">
                     <button class="panel-view-btn is-active" data-view="games" aria-pressed="true">By Game</button>
                     <button class="panel-view-btn" data-view="market" aria-pressed="false">By Market</button>
+                    <button class="panel-view-btn" data-view="futures" aria-pressed="false">Futures</button>
                     <button class="panel-view-btn" data-view="sharp" aria-pressed="false">Sharp Moves</button>
                     <button class="panel-view-btn" data-view="arb" aria-pressed="false">Arbitrage</button>
                 </div>
@@ -121,6 +122,7 @@ $first_key = ! empty( $sports ) ? $sports[0]['key'] : '';
                 </div>
             </div>
             <div class="panel-market-view" hidden></div>
+            <div class="panel-futures-view" hidden></div>
             <div class="panel-sharp-view" hidden></div>
             <div class="panel-arb-view" hidden></div>
         </div>
@@ -2327,6 +2329,82 @@ function fmtMarket(key) {
      * Stake split: overStake  = totalStake × (underImpl / combined)
      *              underStake = totalStake × (overImpl  / combined)
      */
+    function renderFuturesView(panel, sportKey) {
+        const container = panel.querySelector('.panel-futures-view');
+        if (!container) return;
+
+        if (container.dataset.loaded === sportKey) return;
+
+        container.innerHTML = '<div class="empty-state empty-state--loading"><p class="empty-state__title">Loading futures&hellip;</p></div>';
+
+        const params = new URLSearchParams({
+            action: 'statsight_get_futures',
+            nonce:  statsightAjax.nonce,
+            sport:  sportKey,
+        });
+
+        fetch(`${statsightAjax.url}?${params}`)
+            .then(r => r.json())
+            .then(function (json) {
+                if (!json.success) throw new Error(json.data?.message || 'Request failed');
+                buildFuturesTable(container, json.data);
+                container.dataset.loaded = sportKey;
+            })
+            .catch(function (err) {
+                container.innerHTML = `<p class="futures-empty__title" style="padding:1rem">Failed to load futures: ${escHtml(err.message)}</p>`;
+            });
+    }
+
+    function buildFuturesTable(container, data) {
+        const books    = data.books    || [];
+        const outcomes = data.outcomes || [];
+
+        if (data.unavailable || !outcomes.length) {
+            container.innerHTML = `
+                <div class="futures-empty">
+                    <p class="futures-empty__title">No futures available</p>
+                    <p class="futures-empty__sub">Futures odds for this sport are not currently available.</p>
+                </div>`;
+            return;
+        }
+
+        const activeBooks   = statsightAjax.activeBooks;
+        const filteredBooks = activeBooks ? books.filter(bk => activeBooks.includes(bk)) : books;
+        const displayBooks  = filteredBooks.length > 0 ? filteredBooks : books;
+
+        const bookHeaders = displayBooks.map(bk => `<th class="futures-col-book">${escHtml(fmtBook(bk))}</th>`).join('');
+
+        const rows = outcomes.map(function (outcome) {
+            const bestScore = Math.max(...displayBooks.map(bk => oddsScore(outcome.odds[bk] ?? null)));
+            const cells = displayBooks.map(function (bk) {
+                const odds = outcome.odds[bk] ?? null;
+                if (odds == null) return '<td class="futures-col-odds odds-cell odds-na">—</td>';
+                const fmt  = odds > 0 ? `+${odds}` : `${odds}`;
+                const best = oddsScore(odds) === bestScore;
+                return `<td class="futures-col-odds odds-cell${best ? ' odds-best' : ''}"><span class="${best ? 'odds-badge--best' : ''}">${escHtml(fmt)}</span></td>`;
+            }).join('');
+            return `<tr><td class="futures-col-outcome">${escHtml(outcome.name)}</td>${cells}</tr>`;
+        }).join('');
+
+        const titleHtml = data.title
+            ? `<h3 class="futures-view__title">${escHtml(data.title)}</h3>`
+            : '';
+
+        container.innerHTML = `
+            ${titleHtml}
+            <div class="futures-view__table-wrap">
+                <table class="props-table futures-view__table">
+                    <thead>
+                        <tr>
+                            <th class="futures-col-outcome">Team / Outcome</th>
+                            ${bookHeaders}
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>`;
+    }
+
     function renderArbView(panel, sportKey) {
         const container = panel.querySelector('.panel-arb-view');
         if (!container) return;
@@ -2975,6 +3053,7 @@ function fmtMarket(key) {
         const sportKey   = panel.dataset.sportKey || '';
         const eventsDiv  = panel.querySelector('.panel-events');
         const marketDiv  = panel.querySelector('.panel-market-view');
+        const futuresDiv = panel.querySelector('.panel-futures-view');
         const sharpDiv   = panel.querySelector('.panel-sharp-view');
         const arbDiv     = panel.querySelector('.panel-arb-view');
         const controls   = panel.querySelector('.panel-market-controls');
@@ -2992,17 +3071,26 @@ function fmtMarket(key) {
                 if (view === 'market') {
                     eventsDiv.hidden  = true;
                     marketDiv.hidden  = false;
+                    futuresDiv.hidden = true;
                     sharpDiv.hidden   = true;
                     arbDiv.hidden     = true;
                     controls.hidden   = false;
                     populateMarketSelect(panel, sportKey);
-                    // Auto-load the first market if one isn't already selected
                     if (select.value) {
                         renderMarketView(panel, sportKey, select.value, sortSelect.value);
                     }
+                } else if (view === 'futures') {
+                    eventsDiv.hidden  = true;
+                    marketDiv.hidden  = true;
+                    futuresDiv.hidden = false;
+                    sharpDiv.hidden   = true;
+                    arbDiv.hidden     = true;
+                    controls.hidden   = true;
+                    renderFuturesView(panel, sportKey);
                 } else if (view === 'sharp') {
                     eventsDiv.hidden  = true;
                     marketDiv.hidden  = true;
+                    futuresDiv.hidden = true;
                     sharpDiv.hidden   = false;
                     arbDiv.hidden     = true;
                     controls.hidden   = true;
@@ -3010,6 +3098,7 @@ function fmtMarket(key) {
                 } else if (view === 'arb') {
                     eventsDiv.hidden  = true;
                     marketDiv.hidden  = true;
+                    futuresDiv.hidden = true;
                     sharpDiv.hidden   = true;
                     arbDiv.hidden     = false;
                     controls.hidden   = true;
@@ -3017,6 +3106,7 @@ function fmtMarket(key) {
                 } else {
                     eventsDiv.hidden  = false;
                     marketDiv.hidden  = true;
+                    futuresDiv.hidden = true;
                     sharpDiv.hidden   = true;
                     arbDiv.hidden     = true;
                     controls.hidden   = true;

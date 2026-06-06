@@ -1326,30 +1326,12 @@ function statsight_cron_refresh_props(): void {
             $events = array_merge( ...array_column( $cached_result['days'], 'events' ) );
         }
 
-        // Only fetch fresh props for events that are live or starting within 3 hours.
-        // Games further out don't have meaningful arb opportunities and slow the cron.
-        $now        = time();
-        $horizon    = $now + ( 8 * HOUR_IN_SECONDS );
-
         foreach ( $events as $event ) {
             $event_id      = $event['id'] ?? '';
             $commence_time = $event['commence_time'] ?? '';
             if ( empty( $event_id ) ) continue;
 
-            $commence_ts = $commence_time ? strtotime( $commence_time ) : 0;
-            $is_live     = $commence_ts > 0 && $commence_ts <= $now;
-            $is_soon     = $commence_ts > 0 && $commence_ts <= $horizon;
-
-            if ( $is_live || $is_soon ) {
-                // Live or starting within 3 hours — always fetch fresh.
-                statsight_fetch_and_cache_props( $sport, $event_id );
-            } else {
-                // Further out — snapshot from cache if warm, skip if cold.
-                $cached = get_transient( 'statsight_props2_' . $event_id );
-                if ( $cached ) {
-                    statsight_record_odds_snapshot( $event_id, $cached['props'] ?? [], $commence_time );
-                }
-            }
+            statsight_fetch_and_cache_props( $sport, $event_id, [], true );
         }
     }
 }
@@ -5681,7 +5663,7 @@ function statsight_props2_from_history( string $sport, string $event_id ): ?arra
  * @param string $event_id
  * @return array|WP_Error
  */
-function statsight_fetch_and_cache_props( string $sport, string $event_id, array $live_stats = [] ): array|WP_Error {
+function statsight_fetch_and_cache_props( string $sport, string $event_id, array $live_stats = [], bool $force_snapshot = false ): array|WP_Error {
     if ( ! defined( 'THE_ODDS_API_KEY' ) || empty( THE_ODDS_API_KEY ) ) {
         return statsight_props2_from_history( $sport, $event_id )
             ?? new WP_Error( 'no_api_key', 'API key not configured.' );
@@ -6098,7 +6080,7 @@ function statsight_fetch_and_cache_props( string $sport, string $event_id, array
     ];
 
     // Write history snapshot then warm the cache.
-    statsight_record_odds_snapshot( $event_id, $props, $data['commence_time'] ?? null, $live_stats );
+    statsight_record_odds_snapshot( $event_id, $props, $data['commence_time'] ?? null, $live_stats, $force_snapshot );
     set_transient( 'statsight_props2_' . $event_id, $payload, 1 * MINUTE_IN_SECONDS );
 
     return $payload;
@@ -6212,21 +6194,23 @@ add_action( 'wp_ajax_nopriv_statsight_get_props', 'statsight_ajax_get_props' );
  * @param string|null $commence_time
  * @param array  $live_stats Optional. Shape: player_name -> market_key -> float (current in-game stat value).
  */
-function statsight_record_odds_snapshot( string $event_id, array $props, ?string $commence_time = null, array $live_stats = [] ): void {
+function statsight_record_odds_snapshot( string $event_id, array $props, ?string $commence_time = null, array $live_stats = [], bool $force = false ): void {
     global $wpdb;
 
     $table  = $wpdb->prefix . 'statsight_odds_history';
     $now    = current_time( 'mysql', true ); // UTC
     $now_ts = strtotime( $now );
 
-    // Avoid duplicate snapshots: skip if a snapshot was already recorded for
-    // this event within the last 5 minutes (e.g. concurrent cache misses).
-    $last = $wpdb->get_var( $wpdb->prepare(
-        "SELECT recorded_at FROM {$table} WHERE event_id = %s ORDER BY recorded_at DESC LIMIT 1",
-        $event_id
-    ) );
-    if ( $last && ( $now_ts - strtotime( $last ) ) < 5 * MINUTE_IN_SECONDS ) {
-        return;
+    // Avoid duplicate snapshots within a short window (e.g. concurrent cache misses).
+    // Skipped when $force = true so the cron always writes its scheduled snapshot.
+    if ( ! $force ) {
+        $last = $wpdb->get_var( $wpdb->prepare(
+            "SELECT recorded_at FROM {$table} WHERE event_id = %s ORDER BY recorded_at DESC LIMIT 1",
+            $event_id
+        ) );
+        if ( $last && ( $now_ts - strtotime( $last ) ) < 5 * MINUTE_IN_SECONDS ) {
+            return;
+        }
     }
 
     // Batch inserts — collect each row as its own array for clean chunking.
