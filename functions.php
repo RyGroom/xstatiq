@@ -1279,16 +1279,12 @@ function statsight_cron_refresh_props(): void {
     // any work, so the job stays aligned even if this run takes a few seconds.
     wp_schedule_single_event( statsight_next_10min_boundary(), 'statsight_refresh_props' );
 
-    error_log( '[Statsight Props] cron_refresh_props fired at ' . current_time( 'mysql', true ) );
-
     $fetch_enabled = get_field( 'odds_data_fetch', 'option' );
     if ( $fetch_enabled !== false && ! $fetch_enabled ) {
-        error_log( '[Statsight Props] fetch disabled — exiting.' );
         return;
     }
 
     if ( ! defined( 'THE_ODDS_API_KEY' ) || empty( THE_ODDS_API_KEY ) ) {
-        error_log( '[Statsight Props] no API key — exiting.' );
         return;
     }
 
@@ -5693,11 +5689,9 @@ function statsight_fetch_and_cache_props( string $sport, string $event_id, array
         'oddsFormat' => 'american',
     ] );
 
-    error_log( '[Statsight Props] fetching ' . $sport . '/' . $event_id );
     $response = wp_remote_get( $url, [ 'timeout' => 20 ] );
 
     if ( is_wp_error( $response ) ) {
-        error_log( '[Statsight Props] wp_remote_get error: ' . $response->get_error_message() );
         return statsight_props2_from_history( $sport, $event_id )
             ?? $response;
     }
