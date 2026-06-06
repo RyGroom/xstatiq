@@ -10431,3 +10431,17 @@ add_action( 'template_redirect', function (): void {
     echo wp_json_encode( $manifest, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT );
     exit;
 } );
+
+// ── Google Analytics ───────────────────────────────────────────────────────
+add_action( 'wp_head', function (): void {
+    ?>
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-YPCDMF2S08"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'G-YPCDMF2S08');
+    </script>
+    <?php
+}, 1 );
