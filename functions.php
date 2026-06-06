@@ -548,7 +548,11 @@ function statsight_schedule_cron(): void {
 add_action( 'after_switch_theme', 'statsight_schedule_cron' );
 
 // Bootstrap cron jobs on first load after this code is deployed.
-add_action( 'init', function (): void {
+// Uses wp_loaded so it also fires during wp-cron.php runs (not just page loads).
+add_action( 'wp_loaded', function (): void {
+    if ( ! wp_next_scheduled( 'statsight_refresh_props' ) ) {
+        wp_schedule_single_event( statsight_next_10min_boundary(), 'statsight_refresh_props' );
+    }
     if ( ! wp_next_scheduled( 'statsight_refresh_live_props' ) ) {
         wp_schedule_single_event( statsight_next_1min_boundary(), 'statsight_refresh_live_props' );
     }
