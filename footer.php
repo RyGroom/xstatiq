@@ -22,14 +22,14 @@
 
                 <nav class="site-footer__nav" aria-label="Footer navigation">
                     <ul>
-                        <li><a href="<?php echo esc_url( home_url( '/props/' ) ); ?>">Props</a></li>
-                        <li><a href="<?php echo esc_url( home_url( '/best-value/' ) ); ?>">Best Value</a></li>
-                        <li><a href="<?php echo esc_url( home_url( '/watchlist/' ) ); ?>">Watchlist</a></li>
+                        <li><a class="nav-footer-link" href="<?php echo esc_url( home_url( '/props/' ) ); ?>">Props</a></li>
+                        <li><a class="nav-footer-link" href="<?php echo esc_url( home_url( '/best-value/' ) ); ?>">Best Value</a></li>
+                        <li><a class="nav-footer-link" href="<?php echo esc_url( home_url( '/watchlist/' ) ); ?>">Watchlist</a></li>
                         <?php if ( is_user_logged_in() ) : ?>
-                        <li><a href="<?php echo esc_url( home_url( '/community/' ) ); ?>">Community</a></li>
+                        <li><a class="nav-footer-link" href="<?php echo esc_url( home_url( '/community/' ) ); ?>">Community</a></li>
                         <?php endif; ?>
-                        <li><a href="<?php echo esc_url( home_url( '/pricing/' ) ); ?>">Pricing</a></li>
-                        <li><a href="<?php echo esc_url( home_url( '/blog/' ) ); ?>">Blog</a></li>
+                        <li><a class="nav-footer-link" href="<?php echo esc_url( home_url( '/pricing/' ) ); ?>">Pricing</a></li>
+                        <li><a class="nav-footer-link" href="<?php echo esc_url( home_url( '/blog/' ) ); ?>">Blog</a></li>
                     </ul>
                 </nav>
 
@@ -42,10 +42,10 @@
                         &copy; <?php echo esc_html( date( 'Y' ) ); ?> xstatiq. All rights reserved.
                     </p>
                     <p class="site-footer__links">
-                        <a href="<?php echo esc_url( home_url( '/support/' ) ); ?>">Support</a> &middot;
-                        <a href="<?php echo esc_url( home_url( '/privacy/' ) ); ?>">Privacy Policy</a> &middot;
-                        <a href="<?php echo esc_url( home_url( '/terms/' ) ); ?>">Terms of Service</a> &middot;
-                        <a href="<?php echo esc_url( home_url( '/responsible-gambling/' ) ); ?>">Responsible Gaming</a>
+                        <a class="nav-footer-utility-link" href="<?php echo esc_url( home_url( '/support/' ) ); ?>">Support</a> &middot;
+                        <a class="nav-footer-utility-link" href="<?php echo esc_url( home_url( '/privacy/' ) ); ?>">Privacy Policy</a> &middot;
+                        <a class="nav-footer-utility-link" href="<?php echo esc_url( home_url( '/terms/' ) ); ?>">Terms of Service</a> &middot;
+                        <a class="nav-footer-utility-link" href="<?php echo esc_url( home_url( '/responsible-gambling/' ) ); ?>">Responsible Gaming</a>
                     </p>
                 </div>
 

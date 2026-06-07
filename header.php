@@ -58,14 +58,14 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
             foreach ( $nav_links as $slug => $label ) {
                 $href   = home_url( '/' . $slug . '/' );
                 $active = $current_slug === $slug ? ' class="current-menu-item"' : '';
-                echo '<li' . $active . '><a href="' . esc_url( $href ) . '">' . esc_html( $label ) . '</a></li>';
+                echo '<li' . $active . '><a class="nav-primary-link" href="' . esc_url( $href ) . '">' . esc_html( $label ) . '</a></li>';
             }
             $myaccount_url = function_exists( 'wc_get_page_permalink' ) ? wc_get_page_permalink( 'myaccount' ) : home_url( '/my-account/' );
             if ( is_user_logged_in() ) {
                 $active = is_account_page() ? ' class="current-menu-item"' : '';
-                echo '<li' . $active . '><a href="' . esc_url( $myaccount_url ) . '">Account</a></li>';
+                echo '<li' . $active . '><a class="nav-primary-link" href="' . esc_url( $myaccount_url ) . '">Account</a></li>';
             } else {
-                echo '<li class="nav-login-item"><a class="nav-login-btn" href="' . esc_url( $myaccount_url ) . '">Log In</a></li>';
+                echo '<li class="nav-login-item"><a class="nav-primary-link nav-login-btn" href="' . esc_url( $myaccount_url ) . '">Log In</a></li>';
             }
             echo '</ul>';
             ?>
@@ -92,13 +92,13 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
     foreach ( $nav_links as $slug => $label ) {
         $href   = home_url( '/' . $slug . '/' );
         $active = $current_slug === $slug ? ' class="current-menu-item"' : '';
-        echo '<li' . $active . '><a href="' . esc_url( $href ) . '">' . esc_html( $label ) . '</a></li>';
+        echo '<li' . $active . '><a class="nav-primary-link" href="' . esc_url( $href ) . '">' . esc_html( $label ) . '</a></li>';
     }
     if ( is_user_logged_in() ) {
         $active = is_account_page() ? ' class="current-menu-item"' : '';
-        echo '<li' . $active . '><a href="' . esc_url( $myaccount_url ) . '">Account</a></li>';
+        echo '<li' . $active . '><a class="nav-primary-link" href="' . esc_url( $myaccount_url ) . '">Account</a></li>';
     } else {
-        echo '<li class="nav-login-item"><a class="nav-login-btn" href="' . esc_url( $myaccount_url ) . '">Log In</a></li>';
+        echo '<li class="nav-login-item"><a class="nav-primary-link nav-login-btn" href="' . esc_url( $myaccount_url ) . '">Log In</a></li>';
     }
     echo '</ul>';
     ?>
