@@ -1301,6 +1301,15 @@ function statsight_cron_refresh_props(): void {
         'soccer_usa_mls',
         'basketball_wnba',
     ];
+    $cached_sports_cron = get_transient( 'statsight_sports_list_v2' );
+    if ( is_array( $cached_sports_cron ) ) {
+        foreach ( $cached_sports_cron as $sport_info ) {
+            $k = $sport_info['key'] ?? '';
+            if ( str_starts_with( $k, 'golf_' ) && ! in_array( $k, $allowed_sports, true ) ) {
+                $allowed_sports[] = $k;
+            }
+        }
+    }
 
     $et_tz      = new DateTimeZone( 'America/New_York' );
     $et_date_of = fn( string $iso ): string =>
@@ -1369,6 +1378,15 @@ function statsight_cron_refresh_live_props(): void {
         'soccer_usa_mls',
         'basketball_wnba',
     ];
+    $cached_sports_live = get_transient( 'statsight_sports_list_v2' );
+    if ( is_array( $cached_sports_live ) ) {
+        foreach ( $cached_sports_live as $sport_info ) {
+            $k = $sport_info['key'] ?? '';
+            if ( str_starts_with( $k, 'golf_' ) && ! in_array( $k, $allowed_sports, true ) ) {
+                $allowed_sports[] = $k;
+            }
+        }
+    }
 
     foreach ( $allowed_sports as $sport ) {
         $path = statsight_espn_sport_path( $sport );
@@ -2645,6 +2663,9 @@ add_action( 'wp_ajax_nopriv_statsight_get_events', 'statsight_ajax_get_events' )
  * Returns an empty string for sports we don't have an ESPN mapping for.
  */
 function statsight_espn_scoreboard_url( string $sport_key ): string {
+    if ( str_starts_with( $sport_key, 'golf_' ) ) {
+        return 'https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard';
+    }
     $map = [
         'basketball_nba'          => 'basketball/nba',
         'basketball_wnba'         => 'basketball/wnba',
@@ -3681,6 +3702,9 @@ add_action( 'wp_ajax_nopriv_statsight_get_defense_rankings', 'statsight_ajax_get
  * @return array{ sport: string, league: string }|null
  */
 function statsight_espn_sport_path( string $sport_key ): ?array {
+    if ( str_starts_with( $sport_key, 'golf_' ) ) {
+        return [ 'sport' => 'golf', 'league' => 'pga' ];
+    }
     $map = [
         'basketball_nba'         => [ 'sport' => 'basketball',    'league' => 'nba' ],
         'basketball_wnba'        => [ 'sport' => 'basketball',    'league' => 'wnba' ],
@@ -3804,6 +3828,21 @@ function statsight_espn_stat_columns( string $sport_key, string $market_key = ''
         ];
         return $map[ $market_key ]
             ?? [ 'G' => 'G', 'A' => 'A', 'PTS' => 'PTS', '+/-' => '+/-', 'S' => 'SOG', 'TOI/G' => 'TOI' ];
+    }
+
+    if ( str_starts_with( $sport_key, 'golf' ) ) {
+        $map = [
+            'player_win_tournament'      => [ 'FIN' => 'FIN', 'SCORE' => 'SCORE', 'R1' => 'R1', 'R2' => 'R2', 'R3' => 'R3', 'R4' => 'R4' ],
+            'player_top_5_finish'        => [ 'FIN' => 'FIN', 'SCORE' => 'SCORE', 'R1' => 'R1', 'R2' => 'R2', 'R3' => 'R3', 'R4' => 'R4' ],
+            'player_top_10_finish'       => [ 'FIN' => 'FIN', 'SCORE' => 'SCORE', 'R1' => 'R1', 'R2' => 'R2', 'R3' => 'R3', 'R4' => 'R4' ],
+            'player_top_20_finish'       => [ 'FIN' => 'FIN', 'SCORE' => 'SCORE', 'R1' => 'R1', 'R2' => 'R2', 'R3' => 'R3', 'R4' => 'R4' ],
+            'player_top_40_finish'       => [ 'FIN' => 'FIN', 'SCORE' => 'SCORE', 'R1' => 'R1', 'R2' => 'R2', 'R3' => 'R3', 'R4' => 'R4' ],
+            'player_make_cut'            => [ 'FIN' => 'FIN', 'SCORE' => 'SCORE' ],
+            'player_first_round_leader'  => [ 'R1' => 'R1', 'FIN' => 'FIN', 'SCORE' => 'SCORE' ],
+            'player_head_to_head'        => [ 'FIN' => 'FIN', 'SCORE' => 'SCORE', 'R1' => 'R1', 'R2' => 'R2', 'R3' => 'R3', 'R4' => 'R4' ],
+            'h2h_3_balls'                => [ 'FIN' => 'FIN', 'SCORE' => 'SCORE', 'R1' => 'R1', 'R2' => 'R2', 'R3' => 'R3', 'R4' => 'R4' ],
+        ];
+        return $map[ $market_key ] ?? [ 'FIN' => 'FIN', 'SCORE' => 'SCORE', 'R1' => 'R1', 'R2' => 'R2', 'R3' => 'R3', 'R4' => 'R4' ];
     }
 
     return [];
@@ -5234,6 +5273,14 @@ function statsight_prop_categories( string $sport ): array {
         ];
     }
 
+    if ( str_starts_with( $sport, 'golf' ) ) {
+        return [
+            'outrights' => [ 'label' => 'Outrights', 'markets' => [ 'player_win_tournament', 'player_top_5_finish', 'player_top_10_finish', 'player_top_20_finish', 'player_top_40_finish' ] ],
+            'matchups'  => [ 'label' => 'Matchups',  'markets' => [ 'player_head_to_head', 'h2h_3_balls' ] ],
+            'specials'  => [ 'label' => 'Specials',  'markets' => [ 'player_make_cut', 'player_first_round_leader' ] ],
+        ];
+    }
+
     // Generic fallback
     return [
         'props' => [ 'label' => 'Props', 'markets' => [ 'player_points', 'player_points_alternate', 'player_assists', 'player_rebounds' ] ],
@@ -5365,6 +5412,16 @@ function statsight_market_labels(): array {
         'player_assists_alternate'                    => 'Assists (Alt Lines)',
         'player_total_saves_alternate'                => 'Saves (Alt Lines)',
         'player_power_play_points_alternate'          => 'Power Play Pts (Alt Lines)',
+        // Golf
+        'player_win_tournament'                       => 'Tournament Winner',
+        'player_top_5_finish'                         => 'Top 5 Finish',
+        'player_top_10_finish'                        => 'Top 10 Finish',
+        'player_top_20_finish'                        => 'Top 20 Finish',
+        'player_top_40_finish'                        => 'Top 40 Finish',
+        'player_make_cut'                             => 'Make the Cut',
+        'player_first_round_leader'                   => 'First Round Leader',
+        'player_head_to_head'                         => 'Head to Head',
+        'h2h_3_balls'                                 => '3-Ball',
     ];
 }
 
@@ -7944,7 +8001,7 @@ function statsight_get_sports(): array {
         return [ 'sports' => [], 'error' => 'Failed to parse API response.' ];
     }
 
-    $allowed_keys = [
+    $fixed_keys = [
         'americanfootball_nfl',
         'basketball_nba',
         'basketball_nba_summer_league',
@@ -7958,10 +8015,11 @@ function statsight_get_sports(): array {
         'basketball_wnba',
     ];
 
-    $indexed = array_column( $sports, null, 'key' );
-    $sports  = array_values(
+    $indexed   = array_column( $sports, null, 'key' );
+    $golf_keys = array_values( array_filter( array_keys( $indexed ), fn( string $k ) => str_starts_with( $k, 'golf_' ) ) );
+    $sports    = array_values(
         array_filter(
-            array_map( fn( string $k ) => $indexed[ $k ] ?? null, $allowed_keys ),
+            array_map( fn( string $k ) => $indexed[ $k ] ?? null, array_merge( $fixed_keys, $golf_keys ) ),
             fn( $s ) => $s !== null
         )
     );
@@ -10355,6 +10413,16 @@ add_action( 'woocommerce_save_account_details_errors', function ( WP_Error $erro
     if ( $display_name && ! statsight_text_is_clean( $display_name ) ) {
         $errors->add( 'display_name_inappropriate', 'That display name isn\'t allowed. Please choose something appropriate.' );
     }
+}, 10, 2 );
+
+// Only allow one subscription plan in the cart at a time.
+// Clears any existing plan before adding a new one, preventing duplicates and multiple plans.
+add_filter( 'woocommerce_add_to_cart_validation', function ( bool $passed, int $product_id ): bool {
+    $plan_ids = [ 26, 27 ];
+    if ( in_array( $product_id, $plan_ids, true ) ) {
+        WC()->cart->empty_cart();
+    }
+    return $passed;
 }, 10, 2 );
 
 // Redirect straight to checkout after add-to-cart instead of back to referring page.

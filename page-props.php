@@ -69,7 +69,9 @@ $first_key = ! empty( $sports ) ? $sports[0]['key'] : '';
         foreach ( $sports as $sport ) :
             $key         = $sport['key'];
             $title       = $sport['title'];
-            $context_line = $sport_context[ $key ] ?? ( $sport['description'] ?? '' );
+            $context_line = $sport_context[ $key ]
+                ?? ( str_starts_with( $key, 'golf_' ) ? 'Outright winner odds, head-to-head matchups, 3-ball betting & make-cut props — compare PGA Tour lines across all major books.' : null )
+                ?? ( $sport['description'] ?? '' );
         ?>
         <div
             id="panel-<?php echo esc_attr( $key ); ?>"
@@ -223,6 +225,16 @@ var MARKET_LABELS = {
     player_first_goal_scorer:        'First Goalscorer',
     player_last_goal_scorer:         'Last Goalscorer',
     player_shots_on_target:          'Shots on Target',
+    // Golf
+    player_win_tournament:           'To Win',
+    player_top_5_finish:             'Top 5',
+    player_top_10_finish:            'Top 10',
+    player_top_20_finish:            'Top 20',
+    player_top_40_finish:            'Top 40',
+    player_make_cut:                 'Make Cut',
+    player_first_round_leader:       'FRL',
+    player_head_to_head:             'H2H',
+    h2h_3_balls:                     '3-Ball',
 };
 
 function fmtBook(key) {
@@ -1080,7 +1092,7 @@ function fmtMarket(key) {
      * into the time cell of each game row.
      */
     function applyRestDays(container, sportKey) {
-        if (sportKey.startsWith('soccer_')) return; // Soccer plays weekly — rest days not meaningful
+        if (sportKey.startsWith('soccer_') || sportKey.startsWith('golf_')) return;
 
         const injectTag = (cell, html) => {
             if (!cell || !html) return;
@@ -2837,6 +2849,16 @@ function fmtMarket(key) {
         mma: [
             { key: 'h2h',    label: 'Moneyline' },
             { key: 'totals', label: 'Round Totals' },
+        ],
+        golf: [
+            { key: 'player_win_tournament',   label: 'Tournament Winner' },
+            { key: 'player_top_5_finish',     label: 'Top 5 Finish' },
+            { key: 'player_top_10_finish',    label: 'Top 10 Finish' },
+            { key: 'player_top_20_finish',    label: 'Top 20 Finish' },
+            { key: 'player_top_40_finish',    label: 'Top 40 Finish' },
+            { key: 'player_make_cut',         label: 'Make the Cut' },
+            { key: 'player_head_to_head',     label: 'Head to Head' },
+            { key: 'h2h_3_balls',             label: '3-Ball' },
         ],
     };
 
