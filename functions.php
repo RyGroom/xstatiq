@@ -10461,6 +10461,16 @@ add_filter( 'woocommerce_add_notice', function ( string $message, string $notice
     return $message;
 }, 10, 2 );
 
+// ── Login failure — redirect so error survives the page load ─────────────
+add_action( 'woocommerce_login_failed', function (): void {
+    wc_clear_notices();
+    $base     = wp_get_referer() ?: wc_get_page_permalink( 'myaccount' );
+    $redirect = remove_query_arg( 'login_error', $base );
+    $redirect = add_query_arg( 'login_error', '1', $redirect );
+    wp_safe_redirect( $redirect );
+    exit;
+} );
+
 // ── Dynamic PWA manifest ───────────────────────────────────────────────────
 add_action( 'template_redirect', function (): void {
     if ( ! isset( $_GET['statsight_manifest'] ) ) {

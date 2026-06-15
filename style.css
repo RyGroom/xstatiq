@@ -490,6 +490,24 @@ img { max-width: 100%; height: auto; }
     max-width: 220px;
 }
 
+.site-footer__social {
+    margin-top: 0.75rem;
+}
+
+.site-footer__social-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+    text-decoration: none;
+    transition: color 0.15s;
+}
+
+.site-footer__social-link:hover {
+    color: var(--color-text);
+}
+
 /* Right column: nav above legal */
 .site-footer__right {
     display: flex;

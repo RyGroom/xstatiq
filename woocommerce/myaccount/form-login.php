@@ -22,6 +22,11 @@ do_action( 'woocommerce_before_customer_login_form' );
             <a href="<?php echo esc_url( home_url( '/' ) ); ?>">xstatiq<em>_</em></a>
         </div>
 
+        <?php if ( isset( $_GET['login_error'] ) ) : ?>
+        <ul class="woocommerce-error" role="alert">
+            <li><?php esc_html_e( 'Incorrect email or password.', 'woocommerce' ); ?></li>
+        </ul>
+        <?php endif; ?>
         <?php wc_print_notices(); ?>
 
         <form class="woocommerce-form woocommerce-form-login login" method="post" novalidate>
