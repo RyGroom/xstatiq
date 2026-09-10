@@ -535,9 +535,7 @@ function statsight_schedule_cron(): void {
     if ( ! wp_next_scheduled( 'statsight_refresh_live_props' ) ) {
         wp_schedule_single_event( statsight_next_1min_boundary(), 'statsight_refresh_live_props' );
     }
-    if ( ! wp_next_scheduled( 'statsight_purge_odds_history' ) ) {
-        wp_schedule_event( time(), 'daily', 'statsight_purge_odds_history' );
-    }
+    statsight_ensure_hourly_odds_purge();
     if ( ! wp_next_scheduled( 'statsight_run_settlement' ) ) {
         wp_schedule_event( time(), 'hourly', 'statsight_run_settlement' );
     }
@@ -546,6 +544,20 @@ function statsight_schedule_cron(): void {
     }
 }
 add_action( 'after_switch_theme', 'statsight_schedule_cron' );
+
+/**
+ * Ensure the odds-history purge is scheduled hourly.
+ * Also migrates existing installs off the old 'daily' recurrence.
+ */
+function statsight_ensure_hourly_odds_purge(): void {
+    if ( wp_next_scheduled( 'statsight_purge_odds_history' )
+        && wp_get_schedule( 'statsight_purge_odds_history' ) !== 'hourly' ) {
+        wp_clear_scheduled_hook( 'statsight_purge_odds_history' );
+    }
+    if ( ! wp_next_scheduled( 'statsight_purge_odds_history' ) ) {
+        wp_schedule_event( time(), 'hourly', 'statsight_purge_odds_history' );
+    }
+}
 
 // Bootstrap cron jobs on first load after this code is deployed.
 // Uses wp_loaded so it also fires during wp-cron.php runs (not just page loads).
@@ -565,6 +577,7 @@ add_action( 'wp_loaded', function (): void {
     if ( ! wp_next_scheduled( 'statsight_purge_deleted_accounts' ) ) {
         wp_schedule_event( time(), 'daily', 'statsight_purge_deleted_accounts' );
     }
+    statsight_ensure_hourly_odds_purge();
 } );
 
 /**
@@ -595,16 +608,23 @@ function statsight_unschedule_cron(): void {
 add_action( 'switch_theme', 'statsight_unschedule_cron' );
 
 /**
- * Purge odds history records older than 3 days.
- * Runs daily via WP-Cron.
+ * Purge odds history records older than 8 hours.
+ * Runs hourly via WP-Cron. Deletes in bounded chunks so a backlog can never
+ * turn into one multi-million-row DELETE that locks the table on shared MySQL.
  */
 function statsight_purge_odds_history(): void {
     global $wpdb;
-    $table    = $wpdb->prefix . 'statsight_odds_history';
-    $cutoff   = gmdate( 'Y-m-d H:i:s', strtotime( '-8 hours' ) );
-    $wpdb->query(
-        $wpdb->prepare( "DELETE FROM {$table} WHERE recorded_at < %s", $cutoff )
-    );
+    $table  = $wpdb->prefix . 'statsight_odds_history';
+    $cutoff = gmdate( 'Y-m-d H:i:s', time() - 8 * HOUR_IN_SECONDS );
+
+    do {
+        $deleted = (int) $wpdb->query(
+            $wpdb->prepare( "DELETE FROM {$table} WHERE recorded_at < %s LIMIT 5000", $cutoff )
+        );
+        if ( $deleted >= 5000 ) {
+            usleep( 100000 ); // 100ms breather between chunks
+        }
+    } while ( $deleted >= 5000 );
 }
 add_action( 'statsight_purge_odds_history', 'statsight_purge_odds_history' );
 
@@ -5068,21 +5088,29 @@ function statsight_ajax_get_line_moves(): void {
             ARRAY_A
         );
 
-        // Current = most frequently recorded line at the most recent snapshot (mode).
-        $current_row = $wpdb->get_row(
+        // Current = mode of each book's most recent line. History only stores
+        // rows when a line changes, so a single "latest snapshot" timestamp no
+        // longer holds every book — derive the latest line per book instead.
+        $book_lines = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT line, COUNT(*) AS cnt FROM {$table}
-                 WHERE event_id = %s AND market_key = %s AND player = %s AND recorded_at = %s
-                 GROUP BY line ORDER BY cnt DESC LIMIT 1",
-                $event_id, $market_key, $player, $last_at
+                "SELECT h.book_key, h.line FROM {$table} h
+                 INNER JOIN (
+                     SELECT book_key, MAX(id) AS max_id FROM {$table}
+                     WHERE event_id = %s AND market_key = %s AND player = %s
+                     GROUP BY book_key
+                 ) latest ON latest.max_id = h.id",
+                $event_id, $market_key, $player
             ),
             ARRAY_A
         );
 
-        if ( ! $open_row || ! $current_row ) continue;
+        if ( ! $open_row || empty( $book_lines ) ) continue;
+
+        $line_counts = array_count_values( array_column( $book_lines, 'line' ) );
+        arsort( $line_counts );
 
         $open_line    = (float) $open_row['line'];
-        $current_line = (float) $current_row['line'];
+        $current_line = (float) array_key_first( $line_counts );
         $delta        = $current_line - $open_line;
 
         if ( abs( $delta ) < 0.5 ) continue;
@@ -6258,16 +6286,41 @@ function statsight_record_odds_snapshot( string $event_id, array $props, ?string
     $now    = current_time( 'mysql', true ); // UTC
     $now_ts = strtotime( $now );
 
-    // Avoid duplicate snapshots within a short window (e.g. concurrent cache misses).
-    // Skipped when $force = true so the cron always writes its scheduled snapshot.
+    // Stampede guard: skip if a snapshot for this event landed in the last 45s
+    // (concurrent cache misses). Skipped when $force = true so the per-minute
+    // live cron always gets a chance to record genuine line moves.
     if ( ! $force ) {
         $last = $wpdb->get_var( $wpdb->prepare(
             "SELECT recorded_at FROM {$table} WHERE event_id = %s ORDER BY recorded_at DESC LIMIT 1",
             $event_id
         ) );
-        if ( $last && ( $now_ts - strtotime( $last ) ) < 5 * MINUTE_IN_SECONDS ) {
+        if ( $last && ( $now_ts - strtotime( $last ) ) < 45 ) {
             return;
         }
+    }
+
+    // Load the most recent odds already recorded for this event so we only write
+    // rows that actually changed. Retention keeps this to a few hours of rows,
+    // and after the first baseline snapshot the vast majority of lines are
+    // unchanged minute-to-minute — this is what keeps the table small.
+    $prev = [];
+    $existing = $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT market_key, player, line, book_key, over_odds, under_odds
+             FROM {$table} WHERE event_id = %s ORDER BY id DESC LIMIT 100000",
+            $event_id
+        ),
+        ARRAY_A
+    );
+    foreach ( $existing as $er ) {
+        $pk = $er['market_key'] . '|' . $er['player'] . '|' . $er['line'] . '|' . $er['book_key'];
+        if ( isset( $prev[ $pk ] ) ) {
+            continue; // rows are newest-first; first hit per key is the current value
+        }
+        $prev[ $pk ] = [
+            'over'  => $er['over_odds']  !== null ? (int) $er['over_odds']  : null,
+            'under' => $er['under_odds'] !== null ? (int) $er['under_odds'] : null,
+        ];
     }
 
     // Batch inserts — collect each row as its own array for clean chunking.
@@ -6285,14 +6338,25 @@ function statsight_record_odds_snapshot( string $event_id, array $props, ?string
 
             foreach ( $lines as $line_key => $books ) {
                 foreach ( $books as $book_key => $odds ) {
+                    $over_odds  = isset( $odds['over'] )  ? (int) $odds['over']  : null;
+                    $under_odds = isset( $odds['under'] ) ? (int) $odds['under'] : null;
+
+                    // Skip unchanged lines — nothing to learn from a duplicate row.
+                    $pk = $market_key . '|' . $player . '|' . $line_key . '|' . $book_key;
+                    if ( isset( $prev[ $pk ] )
+                        && $prev[ $pk ]['over']  === $over_odds
+                        && $prev[ $pk ]['under'] === $under_odds ) {
+                        continue;
+                    }
+
                     $rows[] = [
                         'event_id'   => $event_id,
                         'market_key' => $market_key,
                         'player'     => $player,
                         'line_key'   => $line_key,
                         'book_key'   => $book_key,
-                        'over_odds'  => isset( $odds['over'] )   ? (int) $odds['over']   : null,
-                        'under_odds' => isset( $odds['under'] )  ? (int) $odds['under']  : null,
+                        'over_odds'  => $over_odds,
+                        'under_odds' => $under_odds,
                         'stat_value' => $stat_val,
                         'now'        => $now,
                     ];
