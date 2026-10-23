@@ -299,7 +299,7 @@ function statsight_get_book_labels(): array {
         'caesars'          => 'Caesars',
         'bet365'           => 'Bet365',
         'fanatics'         => 'Fanatics',
-        'espnbet'          => 'ESPN Bet',
+        'espnbet'          => 'theScore Bet',
         'williamhill_us'   => 'Caesars',
         'pointsbetus'      => 'BetUS',
         'betus'            => 'BetUS',
@@ -311,8 +311,13 @@ function statsight_get_book_labels(): array {
         'betrivers'        => 'BetRivers',
         'bovada'           => 'Bovada',
         'ballybet'         => 'Bally Bet',
-        'hardrock'         => 'Hard Rock Bet',
+        'hardrockbet'      => 'Hard Rock Bet',
         'fliff'            => 'Fliff',
+        'betparx'          => 'betPARX',
+        'rebet'            => 'ReBet',
+        'courtside'        => 'Courtside',
+        'betanysports'     => 'BetAnything',
+        'lowvig'           => 'LowVig',
         'prizepicks'       => 'PrizePicks',
         'underdog_fantasy' => 'Underdog',
     ];
@@ -320,8 +325,14 @@ function statsight_get_book_labels(): array {
 
 /** Canonical display-column order for sportsbooks. */
 function statsight_get_book_order(): array {
-    return [ 'fanduel', 'draftkings', 'betmgm', 'caesars', 'bet365', 'fanatics', 'williamhill_us', 'pointsbetus', 'betus', 'mybookieag', 'betonlineag' ];
+    return [ 'fanduel', 'draftkings', 'betmgm', 'caesars', 'bet365', 'fanatics', 'espnbet', 'hardrockbet', 'williamhill_us', 'pointsbetus', 'betus', 'mybookieag', 'betonlineag' ];
 }
+
+/**
+ * Odds API regions requested on every odds call. theScore Bet (key still "espnbet"), Hard Rock,
+ * Bally Bet, Fliff and others are only in us2. Each region is billed separately, so this doubles credit use.
+ */
+const STATSIGHT_ODDS_REGIONS = 'us,us2';
 
 /**
  * Normalise a team display name for fuzzy matching against ESPN team names.
@@ -542,6 +553,9 @@ function statsight_schedule_cron(): void {
     if ( ! wp_next_scheduled( 'statsight_purge_deleted_accounts' ) ) {
         wp_schedule_event( time(), 'daily', 'statsight_purge_deleted_accounts' );
     }
+    if ( ! wp_next_scheduled( 'statsight_sync_team_logos' ) ) {
+        wp_schedule_event( time(), 'daily', 'statsight_sync_team_logos' );
+    }
 }
 add_action( 'after_switch_theme', 'statsight_schedule_cron' );
 
@@ -577,6 +591,9 @@ add_action( 'wp_loaded', function (): void {
     if ( ! wp_next_scheduled( 'statsight_purge_deleted_accounts' ) ) {
         wp_schedule_event( time(), 'daily', 'statsight_purge_deleted_accounts' );
     }
+    if ( ! wp_next_scheduled( 'statsight_sync_team_logos' ) ) {
+        wp_schedule_event( time(), 'daily', 'statsight_sync_team_logos' );
+    }
     statsight_ensure_hourly_odds_purge();
 } );
 
@@ -584,6 +601,7 @@ add_action( 'wp_loaded', function (): void {
  * Clear the cron jobs when the theme is deactivated (another theme is switched to).
  */
 function statsight_unschedule_cron(): void {
+    wp_clear_scheduled_hook( 'statsight_sync_team_logos' );
     $timestamp = wp_next_scheduled( 'statsight_refresh_props' );
     if ( $timestamp ) {
         wp_unschedule_event( $timestamp, 'statsight_refresh_props' );
@@ -2552,7 +2570,7 @@ function statsight_get_events_for_sport( string $sport ): ?array {
 
     $url = 'https://api.the-odds-api.com/v4/sports/' . $sport . '/events?' . http_build_query( [
         'apiKey'           => THE_ODDS_API_KEY,
-        'regions'          => 'us',
+        'regions'          => STATSIGHT_ODDS_REGIONS,
         'dateFormat'       => 'iso',
         'commenceTimeFrom' => $et_midnight_utc,
         'commenceTimeTo'   => $et_3days_utc,
@@ -2745,6 +2763,175 @@ function statsight_espn_team_logos( array $path ): array {
 }
 
 /**
+ * ESPN's API returns 403 to WordPress's default "WordPress/x.y; <site url>" User-Agent,
+ * so send our own on every wp_remote_*() call to an ESPN host.
+ */
+add_filter( 'http_request_args', function ( array $args, string $url ): array {
+    $host = (string) wp_parse_url( $url, PHP_URL_HOST );
+    if ( str_ends_with( $host, '.espn.com' ) || str_ends_with( $host, '.espncdn.com' ) ) {
+        $args['user-agent'] = 'Mozilla/5.0 (xstatiq)';
+    }
+    return $args;
+}, 10, 2 );
+
+/*
+ * Local team logos and player headshots — downloaded once from ESPN's CDN into
+ * wp-content/uploads/xs-{logos,headshots}/<name>.webp and served from this site, so pages never hotlink ESPN.
+ * Missing files are fetched in parallel, up to a per-request budget; the rest show nothing until a later
+ * request (logos also have the daily statsight_sync_team_logos cron). Headshots are only fetched for
+ * players the site actually shows. Failed downloads leave a <name>.none marker, retried after `retry`.
+ */
+const STATSIGHT_MEDIA = [
+    'logos'     => [ 'width' => 160, 'per_request' => 30, 'retry' => DAY_IN_SECONDS ],
+    'headshots' => [ 'width' => 220, 'per_request' => 60, 'retry' => 30 * DAY_IN_SECONDS ], // rookies get photos mid-season
+];
+
+/**
+ * Local file stem for an ESPN image URL, e.g.
+ * ".../i/teamlogos/nba/500/bos.png" => "nba-500-bos", ".../i/headshots/nba/players/full/1966.png" => "nba-1966".
+ * Also unwraps ESPN's "/combiner/i?img=/i/..." resizer URLs.
+ */
+function statsight_media_stem( string $url ): string {
+    $path = (string) wp_parse_url( $url, PHP_URL_PATH );
+    if ( str_starts_with( $path, '/combiner/' ) ) {
+        parse_str( (string) wp_parse_url( $url, PHP_URL_QUERY ), $query );
+        $path = (string) ( $query['img'] ?? '' );
+    }
+    $path = preg_replace( '#^/i/(teamlogos|headshots)/|/players/full|\.[a-z]+$#i', '', $path );
+    return sanitize_file_name( str_replace( '/', '-', trim( $path, '/' ) ) );
+}
+
+/**
+ * Map ESPN image URLs to local copies, downloading missing ones in parallel (within the per-request budget).
+ * Keys are preserved; a URL with no local copy yet maps to '' (the front end already skips empty images).
+ *
+ * @param array<string|int, string> $urls
+ * @param string                    $kind      'logos' or 'headshots' (see STATSIGHT_MEDIA).
+ * @param bool                      $unlimited Ignore the per-request download budget (used by the cron sync).
+ * @return array<string|int, string>
+ */
+function statsight_local_media( array $urls, string $kind, bool $unlimited = false ): array {
+    static $downloads = [];
+
+    $conf    = STATSIGHT_MEDIA[ $kind ];
+    $uploads = wp_upload_dir();
+    $dir     = $uploads['basedir'] . '/xs-' . $kind;
+    $base    = $uploads['baseurl'] . '/xs-' . $kind;
+    $out     = [];
+    $todo    = []; // stem => remote URL
+
+    foreach ( $urls as $key => $url ) {
+        $out[ $key ] = '';
+        $stem        = is_string( $url ) && $url !== '' ? statsight_media_stem( $url ) : '';
+        if ( $stem === '' ) {
+            continue;
+        }
+        foreach ( [ 'webp', 'png' ] as $ext ) {
+            if ( file_exists( "$dir/$stem.$ext" ) ) {
+                $out[ $key ] = "$base/$stem.$ext";
+                continue 2;
+            }
+        }
+        $marker = "$dir/$stem.none";
+        if ( file_exists( $marker ) && filemtime( $marker ) > time() - $conf['retry'] ) {
+            continue;
+        }
+        $todo[ $stem ] = $url;
+    }
+
+    $budget = $unlimited ? count( $todo ) : max( 0, $conf['per_request'] - ( $downloads[ $kind ] ?? 0 ) );
+    $todo   = array_slice( $todo, 0, $budget, true );
+    if ( ! $todo ) {
+        return $out;
+    }
+    $downloads[ $kind ] = ( $downloads[ $kind ] ?? 0 ) + count( $todo );
+    wp_mkdir_p( $dir );
+
+    $saved = [];
+    foreach ( array_chunk( $todo, 10, true ) as $chunk ) {
+        $requests = [];
+        foreach ( $chunk as $stem => $url ) {
+            $requests[ $stem ] = [ 'url' => $url, 'headers' => [ 'User-Agent' => 'Mozilla/5.0 (xstatiq)' ] ];
+        }
+        $responses = WpOrg\Requests\Requests::request_multiple( $requests, [ 'timeout' => 10 ] );
+
+        foreach ( $responses as $stem => $response ) {
+            $ok = $response instanceof WpOrg\Requests\Response && $response->status_code === 200
+                && str_starts_with( (string) $response->headers['content-type'], 'image' );
+            if ( ! $ok ) {
+                touch( "$dir/$stem.none" );
+                continue;
+            }
+
+            // Resize to a small WebP; fall back to the original PNG if the server has no image editor.
+            $tmp = "$dir/$stem.tmp";
+            file_put_contents( $tmp, $response->body );
+            $editor = wp_get_image_editor( $tmp );
+            $ext    = 'png';
+            if ( ! is_wp_error( $editor ) ) {
+                if ( $editor->get_size()['width'] > $conf['width'] ) {
+                    $editor->resize( $conf['width'], null );
+                }
+                $editor->set_quality( 82 );
+                if ( ! is_wp_error( $editor->save( "$dir/$stem.webp", 'image/webp' ) ) ) {
+                    $ext = 'webp';
+                }
+            }
+            if ( $ext === 'png' ) {
+                rename( $tmp, "$dir/$stem.png" );
+            } else {
+                wp_delete_file( $tmp );
+            }
+            wp_delete_file( "$dir/$stem.none" );
+            $saved[ $stem ] = "$base/$stem.$ext";
+        }
+    }
+
+    foreach ( $urls as $key => $url ) {
+        if ( $out[ $key ] === '' && is_string( $url ) && $url !== '' ) {
+            $out[ $key ] = $saved[ statsight_media_stem( $url ) ] ?? '';
+        }
+    }
+    return $out;
+}
+
+/** Local URL for one ESPN logo URL, or '' if there's no local copy yet. */
+function statsight_local_logo( string $url ): string {
+    return statsight_local_media( [ $url ], 'logos' )[0];
+}
+
+/** statsight_local_media() over name => ESPN logo URL, dropping teams with no local copy yet. */
+function statsight_local_logos( array $logos ): array {
+    return array_filter( statsight_local_media( $logos, 'logos' ) );
+}
+
+/** statsight_local_media() over name => ESPN headshot URL, dropping players with no local copy yet. */
+function statsight_local_headshots( array $headshots ): array {
+    return array_filter( statsight_local_media( $headshots, 'headshots' ) );
+}
+
+/** Localise the logos and headshots in a statsight_get_rosters payload (done at send time, not before caching). */
+function statsight_localise_rosters( array $payload ): array {
+    foreach ( [ 'home', 'away' ] as $side ) {
+        if ( isset( $payload[ $side ] ) ) {
+            $payload[ $side ]['logo']      = statsight_local_logo( $payload[ $side ]['logo'] ?? '' );
+            $payload[ $side ]['headshots'] = statsight_local_headshots( $payload[ $side ]['headshots'] ?? [] );
+        }
+    }
+    return $payload;
+}
+
+/** Daily cron: download every missing team logo for every ESPN-mapped sport. */
+function statsight_sync_team_logos(): void {
+    $sports = [ 'basketball_nba', 'basketball_wnba', 'americanfootball_nfl', 'americanfootball_ncaaf', 'baseball_mlb',
+                'icehockey_nhl', 'basketball_ncaab', 'soccer_epl', 'soccer_usa_mls' ];
+    foreach ( $sports as $sport ) {
+        statsight_local_media( statsight_espn_team_logos( statsight_espn_sport_path( $sport ) ), 'logos', true );
+    }
+}
+add_action( 'statsight_sync_team_logos', 'statsight_sync_team_logos' );
+
+/**
  * AJAX handler — fetch live game statuses from the ESPN scoreboard for a sport.
  * Returns an array of { home, away } pairs for games currently in progress.
  * Results are cached for 1 minute to stay fresh without hammering ESPN.
@@ -2868,7 +3055,7 @@ function statsight_ajax_get_live_games(): void {
         $logos = array_merge( $team_logos, $logos );
     }
 
-    $payload = [ 'live' => $live, 'logos' => $logos ];
+    $payload = [ 'live' => $live, 'logos' => statsight_local_logos( $logos ) ];
 
     // Cache for 30 seconds — short enough for live score updates.
     set_transient( $cache_key, $payload, 30 );
@@ -3025,7 +3212,7 @@ function statsight_ajax_get_rosters(): void {
     $cache_key = 'statsight_rosters_v2_' . md5( $sport . $home . $away );
     $cached    = get_transient( $cache_key );
     if ( false !== $cached ) {
-        wp_send_json_success( $cached );
+        wp_send_json_success( statsight_localise_rosters( $cached ) );
     }
 
     // Load all teams (already cached 24h by statsight_espn_team_logos).
@@ -3218,7 +3405,7 @@ function statsight_ajax_get_rosters(): void {
     ];
 
     set_transient( $cache_key, $payload, 30 * MINUTE_IN_SECONDS );
-    wp_send_json_success( $payload );
+    wp_send_json_success( statsight_localise_rosters( $payload ) );
 }
 add_action( 'wp_ajax_statsight_get_rosters',        'statsight_ajax_get_rosters' );
 add_action( 'wp_ajax_nopriv_statsight_get_rosters', 'statsight_ajax_get_rosters' );
@@ -4286,6 +4473,7 @@ function statsight_ajax_get_player_stats(): void {
     $cache_key = 'statsight_player_v6_' . md5( $sport . $player_name . $market_key . $event_id );
     $cached    = get_transient( $cache_key );
     if ( false !== $cached ) {
+        $cached['headshot'] = statsight_local_media( [ $cached['headshot'] ?? '' ], 'headshots' )[0];
         wp_send_json_success( $cached );
     }
 
@@ -4579,6 +4767,7 @@ function statsight_ajax_get_player_stats(): void {
     // up quickly), or 30 seconds during a live game to keep stats fresh.
     $ttl = $live_stats ? 30 : MINUTE_IN_SECONDS;
     set_transient( $cache_key, $payload, $ttl );
+    $payload['headshot'] = statsight_local_media( [ $payload['headshot'] ], 'headshots' )[0];
     wp_send_json_success( $payload );
 }
 add_action( 'wp_ajax_statsight_get_player_stats',        'statsight_ajax_get_player_stats' );
@@ -4592,6 +4781,9 @@ function statsight_ajax_get_mma_fighter_stats( string $player_name ): void {
     $cache_key = 'statsight_mma_v2_' . md5( $player_name );
     $cached    = get_transient( $cache_key );
     if ( false !== $cached ) {
+        if ( ! empty( $cached['bio']['headshot'] ) ) {
+            $cached['bio']['headshot'] = statsight_local_media( [ $cached['bio']['headshot'] ], 'headshots' )[0];
+        }
         wp_send_json_success( $cached );
         return;
     }
@@ -4802,6 +4994,9 @@ function statsight_ajax_get_mma_fighter_stats( string $player_name ): void {
     ];
 
     set_transient( $cache_key, $payload, 5 * MINUTE_IN_SECONDS );
+    if ( ! empty( $payload['bio']['headshot'] ) ) {
+        $payload['bio']['headshot'] = statsight_local_media( [ $payload['bio']['headshot'] ], 'headshots' )[0];
+    }
     wp_send_json_success( $payload );
 }
 
@@ -5172,7 +5367,7 @@ function statsight_ajax_get_futures(): void {
 
     $url = 'https://api.the-odds-api.com/v4/sports/' . $futures_sport . '/odds?' . http_build_query( [
         'apiKey'     => THE_ODDS_API_KEY,
-        'regions'    => 'us',
+        'regions'    => STATSIGHT_ODDS_REGIONS,
         'markets'    => 'outrights',
         'oddsFormat' => 'american',
     ] );
@@ -5768,7 +5963,7 @@ function statsight_fetch_and_cache_props( string $sport, string $event_id, array
 
     $url = 'https://api.the-odds-api.com/v4/sports/' . $sport . '/events/' . $event_id . '/odds?' . http_build_query( [
         'apiKey'     => THE_ODDS_API_KEY,
-        'regions'    => 'us',
+        'regions'    => STATSIGHT_ODDS_REGIONS,
         'markets'    => implode( ',', $all_markets ),
         'dateFormat' => 'iso',
         'oddsFormat' => 'american',
@@ -6703,7 +6898,7 @@ function statsight_ajax_get_best_value(): void {
     if ( empty( $events ) ) {
         $url = 'https://api.the-odds-api.com/v4/sports/' . $sport . '/events?' . http_build_query( [
             'apiKey'           => THE_ODDS_API_KEY,
-            'regions'          => 'us',
+            'regions'          => STATSIGHT_ODDS_REGIONS,
             'dateFormat'       => 'iso',
             'commenceTimeFrom' => gmdate( 'Y-m-d' ) . 'T00:00:00Z',
         ] );
@@ -6767,7 +6962,7 @@ function statsight_ajax_get_best_value(): void {
         } else {
             $url = 'https://api.the-odds-api.com/v4/sports/' . $sport . '/events/' . $event_id . '/odds?' . http_build_query( [
                 'apiKey'     => THE_ODDS_API_KEY,
-                'regions'    => 'us',
+                'regions'    => STATSIGHT_ODDS_REGIONS,
                 'markets'    => implode( ',', $all_markets ),
                 'dateFormat' => 'iso',
                 'oddsFormat' => 'american',
@@ -7297,8 +7492,8 @@ function statsight_ajax_watchlist_game_status(): void {
                 $away_match = stripos( $g['away'], $m_away ) !== false || stripos( $m_away, $g['away'] ) !== false;
                 if ( $home_match && $away_match ) {
                     $logos[ $e['event_id'] ] = [
-                        'home' => esc_url_raw( $g['home_logo'] ?? '' ),
-                        'away' => esc_url_raw( $g['away_logo'] ?? '' ),
+                        'home' => esc_url_raw( statsight_local_logo( $g['home_logo'] ?? '' ) ),
+                        'away' => esc_url_raw( statsight_local_logo( $g['away_logo'] ?? '' ) ),
                     ];
                     break;
                 }
@@ -7717,7 +7912,7 @@ function statsight_get_user_pick_record_breakdown( int $user_id ): array {
         'caesars'          => 'Caesars',
         'bet365'           => 'Bet365',
         'fanatics'         => 'Fanatics',
-        'espnbet'          => 'ESPN Bet',
+        'espnbet'          => 'theScore Bet',
         'betrivers'        => 'BetRivers',
         'bovada'           => 'Bovada',
         'williamhill_us'   => 'Caesars',
@@ -7727,7 +7922,7 @@ function statsight_get_user_pick_record_breakdown( int $user_id ): array {
         'unibet_us'        => 'Unibet',
         'wynnbet'          => 'WynnBET',
         'ballybet'         => 'Bally Bet',
-        'hardrock'         => 'Hard Rock',
+        'hardrockbet'      => 'Hard Rock Bet',
         'fliff'            => 'Fliff',
         'prizepicks'       => 'PrizePicks',
         'underdog_fantasy' => 'Underdog',
@@ -8041,7 +8236,7 @@ function statsight_get_sports(): array {
 
     $url = 'https://api.the-odds-api.com/v4/sports/?' . http_build_query( [
         'apiKey'  => THE_ODDS_API_KEY,
-        'regions' => 'us',
+        'regions' => STATSIGHT_ODDS_REGIONS,
         'sports'  => 'upcoming',
     ] );
 
@@ -9478,7 +9673,7 @@ function statsight_ai_game_lines( string $sport, string $event_id ): ?array {
 
     $url = 'https://api.the-odds-api.com/v4/sports/' . $sport . '/events/' . $event_id . '/odds?' . http_build_query( [
         'apiKey'     => THE_ODDS_API_KEY,
-        'regions'    => 'us',
+        'regions'    => STATSIGHT_ODDS_REGIONS,
         'markets'    => 'spreads,totals',
         'oddsFormat' => 'american',
     ] );

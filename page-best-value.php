@@ -181,11 +181,11 @@ var bvSports = <?php echo wp_json_encode( array_map( fn( $s ) => [ 'key' => $s['
         const map = {
             fanduel: 'FanDuel', draftkings: 'DraftKings', betmgm: 'BetMGM',
             caesars: 'Caesars', bet365: 'Bet365', fanatics: 'Fanatics',
-            espnbet: 'ESPN Bet', williamhill_us: 'Caesars', pointsbetus: 'BetUS',
+            espnbet: 'theScore Bet', williamhill_us: 'Caesars', pointsbetus: 'BetUS',
             betus: 'BetUS', mybookieag: 'MyBookie', betonlineag: 'BetOnline',
             superbook: 'SuperBook', unibet_us: 'Unibet', wynnbet: 'WynnBET',
             betrivers: 'BetRivers', bovada: 'Bovada', ballybet: 'Bally Bet',
-            hardrock: 'Hard Rock Bet', fliff: 'Fliff', prizepicks: 'PrizePicks',
+            hardrockbet: 'Hard Rock Bet', fliff: 'Fliff', prizepicks: 'PrizePicks',
             underdog_fantasy: 'Underdog',
         };
         return map[key] || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
