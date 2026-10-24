@@ -8602,7 +8602,7 @@ function statsight_notif_mark_sent( int $user_id, string $rule_id, string $finge
 function statsight_notif_purge_old_sent(): void {
     global $wpdb;
     $table  = $wpdb->prefix . 'statsight_notif_sent';
-    $cutoff = gmdate( 'Y-m-d H:i:s', time() - 2 * DAY_IN_SECONDS );
+    $cutoff = gmdate( 'Y-m-d H:i:s', time() - 7 * DAY_IN_SECONDS );   // outlives any game on the 3-day slate
     $wpdb->query( $wpdb->prepare( "DELETE FROM {$table} WHERE sent_at < %s", $cutoff ) );
 }
 
@@ -8646,6 +8646,74 @@ function statsight_send_notif_email( int $user_id, string $subject, string $body
     ];
 
     return wp_mail( $user->user_email, '[xstatiq] ' . $subject, $html, $headers );
+}
+
+/** Max alert emails per user per hour; matches over the cap aren't marked sent, so they join the next email. */
+const STATSIGHT_NOTIF_MAX_PER_HOUR = 4;
+
+/**
+ * Send one rule's new matches from this cron run as a single email (top 10, then "+N more") and one push.
+ * Each match is marked sent first, so a match already claimed by an overlapping run is dropped.
+ *
+ * @param array $hits Each: fp, score (sort key, highest first), player, market, matchup, price, metric.
+ * @return int Number of push subscriptions notified.
+ */
+function statsight_notif_send_bundle( int $user_id, string $rule_id, string $rule_type, array $hits, bool $allow_push ): int {
+    $hour_key = 'statsight_notif_h_' . $user_id . '_' . gmdate( 'YmdH' );
+    $sent_now = (int) get_transient( $hour_key );
+    if ( $sent_now >= STATSIGHT_NOTIF_MAX_PER_HOUR ) {
+        return 0;
+    }
+
+    $hits = array_values( array_filter( $hits, fn( $h ) => statsight_notif_mark_sent( $user_id, $rule_id, $h['fp'] ) ) );
+    if ( ! $hits ) {
+        return 0;
+    }
+    usort( $hits, fn( $a, $b ) => $b['score'] <=> $a['score'] );
+    set_transient( $hour_key, $sent_now + 1, HOUR_IN_SECONDS );
+
+    $types = [
+        'best_value'       => [ 'Best Value', 'new edge', 'new edges', '/best-value/' ],
+        'arbitrage'        => [ 'Arbitrage', 'new arbitrage', 'new arbitrage opportunities', '/props/' ],
+        'ev_threshold'     => [ 'EV Alert', 'new +EV prop', 'new +EV props', '/props/' ],
+        'line_move'        => [ 'Line Move', 'line move', 'line moves', '/props/' ],
+        'watchlist_result' => [ 'Watchlist', 'prop settled', 'props settled', '/watchlist/' ],
+    ];
+    [ $label, $one, $many, $path ] = $types[ $rule_type ] ?? [ 'Alert', 'new alert', 'new alerts', '/props/' ];
+    $n     = count( $hits );
+    $first = $hits[0];
+
+    $subject = $n === 1
+        ? "{$label}: {$first['player']} {$first['market']}"
+        : "{$label}: {$n} {$many} — {$first['player']} {$first['metric']} leads";
+
+    $cell = "padding:8px 6px;border-bottom:1px solid rgba(255,255,255,0.05);";
+    $rows = '';
+    foreach ( array_slice( $hits, 0, 10 ) as $h ) {
+        $rows .= "<tr>
+            <td style='{$cell}'><div style='font-weight:600;'>" . esc_html( $h['player'] ) . "</div>
+                <div style='font-size:0.8rem;color:rgba(240,242,247,0.6);'>" . esc_html( $h['market'] ) . "</div>
+                <div style='font-size:0.75rem;color:rgba(240,242,247,0.4);'>" . esc_html( $h['matchup'] ) . "</div></td>
+            <td style='{$cell}color:#2e7cf6;font-weight:700;white-space:nowrap;'>" . esc_html( $h['price'] ) . "</td>
+            <td style='{$cell}color:#22c55e;font-weight:700;white-space:nowrap;text-align:right;'>" . esc_html( $h['metric'] ) . '</td>
+        </tr>';
+    }
+    $more = $n > 10 ? "<p style='margin:12px 0 0;font-size:0.85rem;color:rgba(240,242,247,0.5);'>+" . ( $n - 10 ) . ' more on xstatiq</p>' : '';
+    $body = "<h2 style='margin:0 0 4px;font-size:1.1rem;font-weight:700;color:#f0f2f7;'>{$label}</h2>
+        <p style='margin:0 0 16px;color:rgba(240,242,247,0.5);font-size:0.85rem;'>{$n} " . ( $n === 1 ? $one : $many ) . "</p>
+        <table style='width:100%;border-collapse:collapse;font-size:0.875rem;'>{$rows}</table>{$more}
+        <a href='" . esc_url( home_url( $path ) ) . "' style='display:inline-block;margin-top:20px;padding:10px 20px;background:#2e7cf6;color:#fff;border-radius:6px;text-decoration:none;font-weight:600;font-size:0.9rem;'>View on xstatiq &rarr;</a>";
+
+    $sent = statsight_send_notif_email( $user_id, $subject, $body );
+    error_log( "[Statsight Notif] {$rule_type} bundle of {$n} for user {$user_id}: " . ( $sent ? 'sent' : 'FAILED' ) );
+
+    if ( ! $allow_push ) {
+        return 0;
+    }
+    $push_body = $n === 1
+        ? "{$first['player']} {$first['market']} — {$first['metric']}"
+        : "{$first['player']} {$first['market']} — {$first['metric']}, +" . ( $n - 1 ) . ' more';
+    return statsight_send_push_to_user( $user_id, $subject, $push_body, home_url( $path ) );
 }
 
 /**
@@ -9250,6 +9318,9 @@ function statsight_cron_send_notifications(): void {
             }
 
             // ── Per-event rule evaluation ──────────────────────────────────
+            // New matches across every event are collected here and sent as one email per rule (below),
+            // so a batch of fresh odds doesn't arrive as a flood of single-prop emails.
+            $hits = [];
             foreach ( $payloads as $event_id => $payload ) {
                 $event = $all_events[ $event_id ] ?? [];
 
@@ -9269,31 +9340,19 @@ function statsight_cron_send_notifications(): void {
                         foreach ( $bv_rows as $row ) {
                             if ( $row['edge'] < $threshold ) continue;
 
-                            // Fingerprint: one alert per player+market per day.
-                            $fingerprint = implode( '|', [ $event_id, $row['player'], $row['market_key'], $today ] );
-                            error_log( "[Statsight Notif] best_value candidate: {$row['player']} {$row['market_key']} edge={$row['edge']} threshold={$threshold} fp={$fingerprint}" );
-                            if ( statsight_notif_already_sent( $user_id, $rule_id, $fingerprint ) ) {
-                                error_log( '[Statsight Notif] already sent — skipping.' );
-                                continue;
-                            }
+                            // One alert per game, player, market and line (a move to a new line can alert again).
+                            $fingerprint = implode( '|', [ $event_id, $row['player'], $row['market_key'], $row['line'] ] );
+                            if ( statsight_notif_already_sent( $user_id, $rule_id, $fingerprint ) ) continue;
 
-                            $subject = "Best Value: {$row['player']} {$row['market_label']}";
-                            $body    = "<h2 style='margin:0 0 8px;font-size:1.1rem;font-weight:700;color:#f0f2f7;'>Best Value Alert</h2>
-                                <p style='margin:0 0 16px;color:rgba(240,242,247,0.6);font-size:0.875rem;'>{$matchup}</p>
-                                <table style='width:100%;border-collapse:collapse;font-size:0.9rem;'>
-                                  <tr><td style='padding:6px 0;color:rgba(240,242,247,0.5);'>Player</td><td style='padding:6px 0;font-weight:600;'>{$row['player']}</td></tr>
-                                  <tr><td style='padding:6px 0;color:rgba(240,242,247,0.5);'>Market</td><td style='padding:6px 0;'>{$row['market_label']} {$row['line']}</td></tr>
-                                  <tr><td style='padding:6px 0;color:rgba(240,242,247,0.5);'>Best Odds</td><td style='padding:6px 0;color:#2e7cf6;font-weight:700;'>" . statsight_fmt_odds( $row['best_odds'] ) . " ({$row['best_book']})</td></tr>
-                                  <tr><td style='padding:6px 0;color:rgba(240,242,247,0.5);'>Edge</td><td style='padding:6px 0;color:#22c55e;font-weight:700;'>{$row['edge']}pp</td></tr>
-                                </table>
-                                <a href='" . esc_url( home_url( '/props/' ) ) . "' style='display:inline-block;margin-top:20px;padding:10px 20px;background:#2e7cf6;color:#fff;border-radius:6px;text-decoration:none;font-weight:600;font-size:0.9rem;'>View Props &rarr;</a>";
-
-                            if ( ! statsight_notif_mark_sent( $user_id, $rule_id, $fingerprint ) ) continue;
-                            $sent = statsight_send_notif_email( $user_id, $subject, $body );
-                            error_log( '[Statsight Notif] wp_mail result: ' . ( $sent ? 'sent' : 'FAILED' ) );
-                            if ( $push_sent_this_run < $push_limit_per_run ) {
-                                $push_sent_this_run += statsight_send_push_to_user( $user_id, $subject, "{$row['player']} {$row['market_label']} {$row['line']} — {$row['edge']}pp edge", home_url( '/best-value/' ) );
-                            }
+                            $hits[] = [
+                                'fp'      => $fingerprint,
+                                'score'   => $row['edge'],
+                                'player'  => $row['player'],
+                                'market'  => "{$row['market_label']} {$row['line']}",
+                                'matchup' => $matchup,
+                                'price'   => statsight_fmt_odds( $row['best_odds'] ) . " {$row['best_book']}",
+                                'metric'  => "+{$row['edge']}% edge",
+                            ];
                         }
                     }
                 }
@@ -9348,29 +9407,19 @@ function statsight_cron_send_notifications(): void {
                             $market_labels = $payload['market_labels'] ?? [];
                             $market_label  = $market_labels[ $base_key ] ?? $base_key;
 
-                            $fingerprint = implode( '|', [ $event_id, $player, $base_key, $today ] );
+                            $fingerprint = implode( '|', [ $event_id, $player, $base_key, $default_line ] );
                             if ( statsight_notif_already_sent( $user_id, $rule_id, $fingerprint ) ) continue;
 
-                            $over_book_label  = $books[ $best_over_bk ]  ?? $best_over_bk;
-                            $under_book_label = $books[ $best_under_bk ] ?? $best_under_bk;
-
-                            $subject = "Arbitrage: {$player} {$market_label}";
-                            $body    = "<h2 style='margin:0 0 8px;font-size:1.1rem;font-weight:700;color:#f0f2f7;'>Arbitrage Opportunity</h2>
-                                <p style='margin:0 0 16px;color:rgba(240,242,247,0.6);font-size:0.875rem;'>{$matchup}</p>
-                                <table style='width:100%;border-collapse:collapse;font-size:0.9rem;'>
-                                  <tr><td style='padding:6px 0;color:rgba(240,242,247,0.5);'>Player</td><td style='padding:6px 0;font-weight:600;'>{$player}</td></tr>
-                                  <tr><td style='padding:6px 0;color:rgba(240,242,247,0.5);'>Market</td><td style='padding:6px 0;'>{$market_label} {$default_line}</td></tr>
-                                  <tr><td style='padding:6px 0;color:rgba(240,242,247,0.5);'>Best Over</td><td style='padding:6px 0;'>" . statsight_fmt_odds( $best_over ) . " ({$over_book_label})</td></tr>
-                                  <tr><td style='padding:6px 0;color:rgba(240,242,247,0.5);'>Best Under</td><td style='padding:6px 0;'>" . statsight_fmt_odds( $best_under ) . " ({$under_book_label})</td></tr>
-                                  <tr><td style='padding:6px 0;color:rgba(240,242,247,0.5);'>Arb %</td><td style='padding:6px 0;color:#22c55e;font-weight:700;'>{$arb_pct}%</td></tr>
-                                </table>
-                                <a href='" . esc_url( home_url( '/props/' ) ) . "' style='display:inline-block;margin-top:20px;padding:10px 20px;background:#2e7cf6;color:#fff;border-radius:6px;text-decoration:none;font-weight:600;font-size:0.9rem;'>View Props &rarr;</a>";
-
-                            if ( ! statsight_notif_mark_sent( $user_id, $rule_id, $fingerprint ) ) continue;
-                            $email_sent = statsight_send_notif_email( $user_id, $subject, $body );
-                            if ( $push_sent_this_run < $push_limit_per_run ) {
-                                $push_sent_this_run += statsight_send_push_to_user( $user_id, $subject, "{$player} {$market_label} {$default_line} — {$arb_pct}% arb", home_url( '/props/' ) );
-                            }
+                            $hits[] = [
+                                'fp'      => $fingerprint,
+                                'score'   => $arb_pct,
+                                'player'  => $player,
+                                'market'  => "{$market_label} {$default_line}",
+                                'matchup' => $matchup,
+                                'price'   => 'O ' . statsight_fmt_odds( $best_over ) . ' ' . ( $books[ $best_over_bk ] ?? $best_over_bk )
+                                           . ' / U ' . statsight_fmt_odds( $best_under ) . ' ' . ( $books[ $best_under_bk ] ?? $best_under_bk ),
+                                'metric'  => "{$arb_pct}% arb",
+                            ];
                         }
                     }
                 }
@@ -9398,27 +9447,18 @@ function statsight_cron_send_notifications(): void {
                             $best_bk      = $value['best_bk'];
                             $best_odds    = $value['best_odds'];
 
-                            $fingerprint = implode( '|', [ $event_id, $player, $base_key, $today ] );
+                            $fingerprint = implode( '|', [ $event_id, $player, $base_key, $default_line ] );
                             if ( statsight_notif_already_sent( $user_id, $rule_id, $fingerprint ) ) continue;
 
-                            $ev_book_label = $books[ $best_bk ] ?? $best_bk;
-
-                            $subject = "EV Alert: {$player} {$market_label}";
-                            $body    = "<h2 style='margin:0 0 8px;font-size:1.1rem;font-weight:700;color:#f0f2f7;'>EV% Alert</h2>
-                                <p style='margin:0 0 16px;color:rgba(240,242,247,0.6);font-size:0.875rem;'>{$matchup}</p>
-                                <table style='width:100%;border-collapse:collapse;font-size:0.9rem;'>
-                                  <tr><td style='padding:6px 0;color:rgba(240,242,247,0.5);'>Player</td><td style='padding:6px 0;font-weight:600;'>{$player}</td></tr>
-                                  <tr><td style='padding:6px 0;color:rgba(240,242,247,0.5);'>Market</td><td style='padding:6px 0;'>{$market_label} {$default_line}</td></tr>
-                                  <tr><td style='padding:6px 0;color:rgba(240,242,247,0.5);'>Best Odds</td><td style='padding:6px 0;color:#2e7cf6;font-weight:700;'>" . statsight_fmt_odds( $best_odds ) . " ({$ev_book_label})</td></tr>
-                                  <tr><td style='padding:6px 0;color:rgba(240,242,247,0.5);'>EV%</td><td style='padding:6px 0;color:#22c55e;font-weight:700;'>{$ev}%</td></tr>
-                                </table>
-                                <a href='" . esc_url( home_url( '/props/' ) ) . "' style='display:inline-block;margin-top:20px;padding:10px 20px;background:#2e7cf6;color:#fff;border-radius:6px;text-decoration:none;font-weight:600;font-size:0.9rem;'>View Props &rarr;</a>";
-
-                            if ( ! statsight_notif_mark_sent( $user_id, $rule_id, $fingerprint ) ) continue;
-                            $email_sent = statsight_send_notif_email( $user_id, $subject, $body );
-                            if ( $push_sent_this_run < $push_limit_per_run ) {
-                                $push_sent_this_run += statsight_send_push_to_user( $user_id, $subject, "{$player} {$market_label} {$default_line} — {$ev}% EV", home_url( '/props/' ) );
-                            }
+                            $hits[] = [
+                                'fp'      => $fingerprint,
+                                'score'   => $ev,
+                                'player'  => $player,
+                                'market'  => "{$market_label} {$default_line}",
+                                'matchup' => $matchup,
+                                'price'   => statsight_fmt_odds( $best_odds ) . ' ' . ( $books[ $best_bk ] ?? $best_bk ),
+                                'metric'  => "+{$ev}% EV",
+                            ];
                         }
                     }
                 }
@@ -9465,24 +9505,15 @@ function statsight_cron_send_notifications(): void {
                             $fingerprint = implode( '|', [ $event_id, $player, $base_key, $prev, $current_line ] );
                             if ( statsight_notif_already_sent( $user_id, $rule_id, $fingerprint ) ) continue;
 
-                            $direction = (float) $current_line > (float) $prev ? '&uarr;' : '&darr;';
-
-                            $subject = "Line Move: {$player} {$market_label}";
-                            $body    = "<h2 style='margin:0 0 8px;font-size:1.1rem;font-weight:700;color:#f0f2f7;'>Line Move Alert</h2>
-                                <p style='margin:0 0 16px;color:rgba(240,242,247,0.6);font-size:0.875rem;'>{$matchup}</p>
-                                <table style='width:100%;border-collapse:collapse;font-size:0.9rem;'>
-                                  <tr><td style='padding:6px 0;color:rgba(240,242,247,0.5);'>Player</td><td style='padding:6px 0;font-weight:600;'>{$player}</td></tr>
-                                  <tr><td style='padding:6px 0;color:rgba(240,242,247,0.5);'>Market</td><td style='padding:6px 0;'>{$market_label}</td></tr>
-                                  <tr><td style='padding:6px 0;color:rgba(240,242,247,0.5);'>Line</td><td style='padding:6px 0;'>{$prev} {$direction} <strong>{$current_line}</strong></td></tr>
-                                  <tr><td style='padding:6px 0;color:rgba(240,242,247,0.5);'>Move</td><td style='padding:6px 0;color:#f59e0b;font-weight:700;'>{$move} pts</td></tr>
-                                </table>
-                                <a href='" . esc_url( home_url( '/props/' ) ) . "' style='display:inline-block;margin-top:20px;padding:10px 20px;background:#2e7cf6;color:#fff;border-radius:6px;text-decoration:none;font-weight:600;font-size:0.9rem;'>View Props &rarr;</a>";
-
-                            if ( ! statsight_notif_mark_sent( $user_id, $rule_id, $fingerprint ) ) continue;
-                            $email_sent = statsight_send_notif_email( $user_id, $subject, $body );
-                            if ( $push_sent_this_run < $push_limit_per_run ) {
-                                $push_sent_this_run += statsight_send_push_to_user( $user_id, $subject, "{$player} {$market_label}: {$prev} → {$current_line}", home_url( '/props/' ) );
-                            }
+                            $hits[] = [
+                                'fp'      => $fingerprint,
+                                'score'   => $move,
+                                'player'  => $player,
+                                'market'  => $market_label,
+                                'matchup' => $matchup,
+                                'price'   => "{$prev} " . ( (float) $current_line > (float) $prev ? '↑' : '↓' ) . " {$current_line}",
+                                'metric'  => "{$move} pts",
+                            ];
                         }
                     }
                 }
@@ -9535,23 +9566,20 @@ function statsight_cron_send_notifications(): void {
                         ? statsight_fmt_odds( (int) ( $last_odds['over_odds'] ?? $wl['odds'] ) )
                         : statsight_fmt_odds( (int) ( $last_odds['under_odds'] ?? $wl['odds'] ) );
 
-                    $subject = "Game Ended: {$wl['player']} {$wl['market_label']}";
-                    $body    = "<h2 style='margin:0 0 8px;font-size:1.1rem;font-weight:700;color:#f0f2f7;'>Watchlist Prop Settled</h2>
-                        <p style='margin:0 0 16px;color:rgba(240,242,247,0.6);font-size:0.875rem;'>{$wl['matchup']}</p>
-                        <table style='width:100%;border-collapse:collapse;font-size:0.9rem;'>
-                          <tr><td style='padding:6px 0;color:rgba(240,242,247,0.5);'>Player</td><td style='padding:6px 0;font-weight:600;'>{$wl['player']}</td></tr>
-                          <tr><td style='padding:6px 0;color:rgba(240,242,247,0.5);'>Market</td><td style='padding:6px 0;'>{$wl['market_label']} {$wl['line']}</td></tr>
-                          <tr><td style='padding:6px 0;color:rgba(240,242,247,0.5);'>Direction</td><td style='padding:6px 0;'>" . ucfirst( $wl['direction'] ) . "</td></tr>
-                          <tr><td style='padding:6px 0;color:rgba(240,242,247,0.5);'>Closing Odds</td><td style='padding:6px 0;'>{$tracked_odds} ({$wl['book']})</td></tr>
-                        </table>
-                        <a href='" . esc_url( home_url( '/watchlist/' ) ) . "' style='display:inline-block;margin-top:20px;padding:10px 20px;background:#2e7cf6;color:#fff;border-radius:6px;text-decoration:none;font-weight:600;font-size:0.9rem;'>View Watchlist &rarr;</a>";
-
-                    if ( ! statsight_notif_mark_sent( $user_id, $rule_id, $fingerprint ) ) continue;
-                    $email_sent = statsight_send_notif_email( $user_id, $subject, $body );
-                    if ( $push_sent_this_run < $push_limit_per_run ) {
-                        $push_sent_this_run += statsight_send_push_to_user( $user_id, $subject, "{$wl['player']} {$wl['market_label']} {$wl['line']} — game settled", home_url( '/watchlist/' ) );
-                    }
+                    $hits[] = [
+                        'fp'      => $fingerprint,
+                        'score'   => 0,
+                        'player'  => $wl['player'],
+                        'market'  => "{$wl['market_label']} {$wl['line']} " . ucfirst( $wl['direction'] ),
+                        'matchup' => $wl['matchup'],
+                        'price'   => "{$tracked_odds} {$wl['book']}",
+                        'metric'  => 'Settled',
+                    ];
                 }
+            }
+
+            if ( ! empty( $hits ) ) {
+                $push_sent_this_run += statsight_notif_send_bundle( $user_id, $rule_id, $rule_type, $hits, $push_sent_this_run < $push_limit_per_run );
             }
         } // end foreach rules
 

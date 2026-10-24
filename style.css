@@ -3,7 +3,7 @@ Theme Name: xstatiq
 Theme URI: https://statsight.com/
 Author: Statsight
 Description: Sports prop aggregator — compare betting odds across FanDuel, Fanatics, Bet365, Caesars, and more.
-Version: 9.52
+Version: 9.53
 Text Domain: statsight
 */
 
@@ -10156,21 +10156,92 @@ ul.products li.product .button:hover {
     max-width: 860px;
 }
 
+/* Animated glow border (from sport-predict's Ask page): a rotating conic gradient behind the field, with a
+   blurred copy for the glow. Brighter on focus, faster while the analyst is thinking. */
+@property --ask-angle {
+    syntax: '<angle>';
+    initial-value: 0deg;
+    inherits: false;
+}
+
 .ask-box__field {
     position: relative;
+    isolation: isolate;
+}
+
+.ask-box__glow {
+    position: absolute;
+    inset: -1px;
+    z-index: -1;
+    border-radius: calc(var(--radius-lg) + 1px);
+    background: conic-gradient(from var(--ask-angle), var(--color-border-hover), var(--color-primary) 12%,
+        var(--color-border-hover) 28%, var(--color-border-hover) 62%, var(--color-accent) 76%, var(--color-border-hover) 90%);
+    animation: ask-spin 6s linear infinite;
+}
+
+.ask-box__glow::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    background: inherit;
+    filter: blur(18px);
+    opacity: 0.2;
+    transition: opacity 0.3s;
+}
+
+.ask-box__field:focus-within .ask-box__glow::after {
+    opacity: 0.45;
+}
+
+.ask-box.is-busy .ask-box__glow {
+    animation-duration: 1.4s;
+}
+
+.ask-box.is-busy .ask-box__glow::after {
+    opacity: 0.6;
+}
+
+@keyframes ask-spin {
+    to { --ask-angle: 360deg; }
+}
+
+.ask-box__inner {
     display: flex;
     align-items: flex-end;
     gap: var(--spacing-sm);
+    margin: 1px;
     padding: 0.75rem 0.75rem 0.75rem 1rem;
-    background: var(--color-surface);
-    border: 1px solid var(--color-border-hover);
     border-radius: var(--radius-lg);
-    transition: border-color 0.15s, box-shadow 0.15s;
+    background: linear-gradient(180deg, var(--color-surface-2), var(--color-surface));
 }
 
-.ask-box__field:focus-within {
-    border-color: var(--color-primary);
-    box-shadow: var(--shadow-glow);
+.ask-box__spark {
+    flex-shrink: 0;
+    align-self: flex-start;
+    width: 20px;
+    height: 20px;
+    margin-top: 0.55rem;
+    fill: var(--color-accent);
+    filter: drop-shadow(0 0 6px rgba(0, 229, 255, 0.6));
+}
+
+.ask-box.is-busy .ask-box__spark {
+    animation: ask-spark 1s ease-in-out infinite alternate;
+}
+
+@keyframes ask-spark {
+    from { opacity: 0.45; transform: scale(0.9); }
+    to   { opacity: 1; transform: scale(1.08); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ask-box__glow,
+    .ask-box__spark,
+    .ask-steps li.is-on::before {
+        animation: none !important;
+    }
 }
 
 .ask-box textarea {

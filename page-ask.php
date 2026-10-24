@@ -31,11 +31,15 @@ get_header();
 
     <form class="ask-box" id="ask-form" autocomplete="off">
         <div class="ask-box__field">
-            <label class="screen-reader-text" for="ask-q">Your sports question</label>
-            <textarea id="ask-q" rows="2" maxlength="400" placeholder="e.g. Is Jalen Brunson&rsquo;s points line worth it tonight?"></textarea>
-            <button type="submit" class="ask-box__send" id="ask-send" aria-label="Ask" disabled>
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h14M13 6l6 6-6 6"/></svg>
-            </button>
+            <div class="ask-box__glow" aria-hidden="true"></div>
+            <div class="ask-box__inner">
+                <svg class="ask-box__spark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l1.8 5.6L19.5 9l-5.7 1.6L12 16l-1.8-5.4L4.5 9l5.7-1.4z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>
+                <label class="screen-reader-text" for="ask-q">Your sports question</label>
+                <textarea id="ask-q" rows="2" maxlength="400" placeholder="e.g. Is Jalen Brunson&rsquo;s points line worth it tonight?"></textarea>
+                <button type="submit" class="ask-box__send" id="ask-send" aria-label="Ask" disabled>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h14M13 6l6 6-6 6"/></svg>
+                </button>
+            </div>
         </div>
         <div class="ask-box__meta"><span id="ask-count">0 / 400</span><span>Sports only &middot; answers come from our data, not guarantees</span></div>
     </form>
