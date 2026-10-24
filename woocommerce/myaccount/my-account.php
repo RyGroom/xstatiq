@@ -306,6 +306,9 @@ asort( $all_books );
                 <section class="acct-card" id="acct-notifications" data-acct-tab="alerts">
                     <h2 class="acct-card__title">Notification Rules</h2>
                     <p class="acct-card__sub">Get emailed when a prop hits your threshold. Each rule fires at most once per prop per day.</p>
+                    <?php if ( $plan !== 'sharp' ) : ?>
+                        <p class="acct-card__sub">Notification rules are part of the Sharp plan. <a href="<?php echo esc_url( home_url( '/pricing/' ) ); ?>">Upgrade to Sharp</a> to turn them on.</p>
+                    <?php endif; ?>
 
                     <div class="notif-rules" id="notif-rules-list">
                         <!-- Rules injected by JS -->
@@ -315,12 +318,12 @@ asort( $all_books );
                         <p>No rules yet. Add one below to get started.</p>
                     </div>
 
-                    <button class="notif-add-btn" id="notif-add-btn" type="button">
+                    <button class="notif-add-btn" id="notif-add-btn" type="button"<?php disabled( $plan !== 'sharp' ); ?>>
                         + Add Rule
                     </button>
 
                     <div class="acct-form-footer">
-                        <button class="acct-btn acct-btn--primary" id="acct-notif-save" type="button">
+                        <button class="acct-btn acct-btn--primary" id="acct-notif-save" type="button"<?php disabled( $plan !== 'sharp' ); ?>>
                             Save Rules
                         </button>
                         <span class="acct-save-status" id="acct-notif-status" aria-live="polite"></span>
@@ -523,7 +526,7 @@ asort( $all_books );
                     <p class="acct-danger-desc">
                         Schedules your account for deletion in 30 days. You can reactivate within that window via the link in your confirmation email.
                         <?php if ( $plan !== 'free' ) : ?>
-                            Your <?php echo esc_html( $plan_label ); ?> plan will be cancelled immediately.
+                            Your <?php echo esc_html( $plan_label ); ?> plan stops renewing right away.
                         <?php endif; ?>
                     </p>
                     <div class="acct-form-footer">
@@ -547,7 +550,7 @@ asort( $all_books );
         <p class="acct-modal__body">
             Your account will be <strong>scheduled for deletion in 30 days</strong>. During that time your data is preserved and you can reactivate via the link in your confirmation email.
             <?php if ( $plan !== 'free' ) : ?>
-                Your <?php echo esc_html( $plan_label ); ?> plan will be cancelled immediately.
+                Your <?php echo esc_html( $plan_label ); ?> plan stops renewing right away.
             <?php endif; ?>
         </p>
         <p class="acct-modal__confirm-label">Type <strong>DELETE</strong> to confirm:</p>

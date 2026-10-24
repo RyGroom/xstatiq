@@ -283,6 +283,10 @@ add_filter( 'query_vars', function ( array $vars ): array {
 
 define( 'STATSIGHT_PRODUCT_PRO',   26 );
 define( 'STATSIGHT_PRODUCT_SHARP', 27 );
+
+// How long fetched props stay cached. Longer than any refresh interval (the crons overwrite the cache well
+// before this), so reads between refreshes never miss the cache and buy the same odds again.
+define( 'STATSIGHT_PROPS_TTL', 2 * HOUR_IN_SECONDS );
 define( 'STATSIGHT_MIN_PICKS',     10 );
 
 /**
@@ -380,20 +384,21 @@ function statsight_normalise_team_name( string $name ): string {
 }
 
 /**
- * Returns the current user's plan: 'sharp', 'pro', or 'free'.
- * Result is cached in a per-request static so WooCommerce order queries
- * only run once per page load.
+ * Returns a user's plan: 'sharp', 'pro', or 'free'. Defaults to the current user.
+ * Results are cached per user in a per-request static so WooCommerce queries
+ * only run once per page load (or once per user in a cron run).
  */
-function statsight_get_user_plan(): string {
-    static $plan = null;
-    if ( $plan !== null ) {
-        return $plan;
-    }
+function statsight_get_user_plan( int $user_id = 0 ): string {
+    static $plans = [];
 
-    $user_id = get_current_user_id();
+    $user_id = $user_id ?: get_current_user_id();
+    if ( isset( $plans[ $user_id ] ) ) {
+        return $plans[ $user_id ];
+    }
+    $plan = &$plans[ $user_id ];
 
     // Admins always get sharp access.
-    if ( $user_id && current_user_can( 'manage_options' ) ) {
+    if ( $user_id && user_can( $user_id, 'manage_options' ) ) {
         $plan = 'sharp';
         return $plan;
     }
@@ -425,8 +430,10 @@ function statsight_get_user_plan(): string {
         }
     }
 
-    // Fall back to completed one-time orders if no subscription found.
-    if ( ! $has_sharp && ! $has_pro && function_exists( 'wc_get_orders' ) ) {
+    // Fall back to completed orders only when WooCommerce Subscriptions isn't running. Pro and Sharp are
+    // subscription products, and a subscription's first order stays "completed" after it's cancelled, so
+    // with Subscriptions active this fallback would hand paid access to cancelled subscribers.
+    if ( ! $has_sharp && ! $has_pro && ! function_exists( 'wcs_get_users_subscriptions' ) && function_exists( 'wc_get_orders' ) ) {
         $orders = wc_get_orders( [
             'customer_id' => $user_id,
             'status'      => [ 'wc-completed' ],
@@ -547,7 +554,7 @@ function statsight_text_is_clean( string $text ): bool {
  */
 function statsight_next_10min_boundary(): int {
     $now      = time();
-    $interval = 5 * MINUTE_IN_SECONDS;
+    $interval = 10 * MINUTE_IN_SECONDS;
     return $now + ( $interval - ( $now % $interval ) );
 }
 
@@ -1407,6 +1414,15 @@ function statsight_cron_refresh_props(): void {
             $commence_time = $event['commence_time'] ?? '';
             if ( empty( $event_id ) ) continue;
 
+            // Games more than 12 hours out barely move: refresh them hourly instead of every run.
+            $starts_in = $commence_time ? strtotime( $commence_time ) - time() : 0;
+            if ( $starts_in > 12 * HOUR_IN_SECONDS ) {
+                $cached = get_transient( 'statsight_props2_' . $event_id );
+                if ( $cached && time() - (int) ( $cached['fetched_at'] ?? 0 ) < HOUR_IN_SECONDS - 60 ) {
+                    continue;
+                }
+            }
+
             statsight_fetch_and_cache_props( $sport, $event_id, [], true );
         }
     }
@@ -1598,6 +1614,13 @@ function statsight_cron_refresh_live_props(): void {
             $away_name = $norm_team_cron( $event['away_team'] ?? '' );
 
             if ( empty( $event_id ) ) {
+                continue;
+            }
+
+            // Only games that have started (allowing for an early tip) and not long ago; otherwise a team's
+            // NEXT game, listed tomorrow, would match its live game by name and be refreshed every minute too.
+            $commence = strtotime( $event['commence_time'] ?? '' );
+            if ( ! $commence || $commence > time() + 15 * MINUTE_IN_SECONDS || $commence < time() - 8 * HOUR_IN_SECONDS ) {
                 continue;
             }
 
@@ -6389,7 +6412,7 @@ function statsight_fetch_and_cache_props( string $sport, string $event_id, array
 
     // Write history snapshot then warm the cache.
     statsight_record_odds_snapshot( $event_id, $props, $data['commence_time'] ?? null, $live_stats, $force_snapshot );
-    set_transient( 'statsight_props2_' . $event_id, $payload, 1 * MINUTE_IN_SECONDS );
+    set_transient( 'statsight_props2_' . $event_id, $payload, STATSIGHT_PROPS_TTL );
 
     return $payload;
 }
@@ -6429,6 +6452,18 @@ function statsight_filter_props_for_free( array $payload ): array {
     return $payload;
 }
 
+/**
+ * Queue one background props refresh for an event. Many viewers hitting the same stale event queue it once:
+ * the lock holds for 2 minutes, and the refresh runs on the next WP-Cron tick.
+ */
+function statsight_queue_props_refresh( string $sport, string $event_id ): void {
+    if ( get_transient( 'statsight_bgref_' . $event_id ) ) {
+        return;
+    }
+    set_transient( 'statsight_bgref_' . $event_id, 1, 2 * MINUTE_IN_SECONDS );
+    wp_schedule_single_event( time(), 'statsight_bg_refresh_props', [ $sport, $event_id ] );
+}
+
 function statsight_ajax_get_props(): void {
     check_ajax_referer( 'statsight_events', 'nonce' );
 
@@ -6444,9 +6479,15 @@ function statsight_ajax_get_props(): void {
     $cached        = get_transient( 'statsight_props2_' . $event_id );
     $is_live_poll  = isset( $_GET['live_poll'] ) && $_GET['live_poll'] === '1';
     $cache_age     = $cached ? ( time() - (int) ( $cached['fetched_at'] ?? 0 ) ) : PHP_INT_MAX;
-    $cache_is_fresh = $cache_age < 60; // less than 60 seconds old
 
-    if ( false !== $cached && ( ! $is_live_poll || $cache_is_fresh ) ) {
+    // The crons keep the cache current (live games every minute, the rest every 10 minutes, far-off games
+    // hourly), so a page view only asks for a refresh when the cache is older than that: the cron missed it.
+    $max_age = $is_live_poll ? 3 * MINUTE_IN_SECONDS : 75 * MINUTE_IN_SECONDS;
+
+    if ( false !== $cached ) {
+        if ( $cache_age > $max_age ) {
+            statsight_queue_props_refresh( $sport, $event_id );
+        }
         if ( $plan === 'free' ) {
             $cached = statsight_filter_props_for_free( $cached );
         }
@@ -6469,8 +6510,7 @@ function statsight_ajax_get_props(): void {
     // This keeps the UI responsive — fresh data arrives on the next live poll.
     $history = statsight_props2_from_history( $sport, $event_id );
     if ( $history ) {
-        wp_schedule_single_event( time(), 'statsight_bg_refresh_props', [ $sport, $event_id ] );
-        spawn_cron();
+        statsight_queue_props_refresh( $sport, $event_id );
         if ( $plan === 'free' ) {
             $history = statsight_filter_props_for_free( $history );
         }
@@ -7815,6 +7855,11 @@ function statsight_ajax_get_pick_record(): void {
         wp_send_json_error( [ 'message' => 'Missing user_id.' ], 400 );
     }
 
+    // Same rule as the profile view: own record always, others only if they made it public.
+    if ( get_current_user_id() !== $user_id && ! get_user_meta( $user_id, 'statsight_record_public', true ) ) {
+        wp_send_json_error( [ 'message' => 'This record is private.' ], 403 );
+    }
+
     wp_send_json_success( statsight_get_user_pick_record( $user_id ) );
 }
 add_action( 'wp_ajax_statsight_get_pick_record',        'statsight_ajax_get_pick_record' );
@@ -8397,6 +8442,9 @@ function statsight_ajax_save_notifications(): void {
     if ( ! $user_id ) {
         wp_send_json_error( [ 'message' => 'Not logged in.' ], 401 );
     }
+    if ( statsight_get_user_plan() !== 'sharp' ) {
+        wp_send_json_error( [ 'message' => 'Notification rules are part of the Sharp plan.' ], 403 );
+    }
 
     $raw   = isset( $_GET['rules'] ) ? wp_unslash( $_GET['rules'] ) : '[]';
     $rules = json_decode( $raw, true );
@@ -8462,7 +8510,7 @@ add_action( 'wp_ajax_statsight_save_active_books', 'statsight_ajax_save_active_b
  *
  * Steps:
  *  1. Mark the account as pending deletion (user meta + timestamp).
- *  2. Cancel any active WooCommerce orders so the user isn't charged again.
+ *  2. Stop their subscriptions renewing so they aren't charged again.
  *  3. Send a confirmation email with a reactivation link.
  *  4. Log the user out.
  *
@@ -8477,23 +8525,14 @@ function statsight_ajax_delete_account(): void {
         wp_send_json_error( [ 'message' => 'Not logged in.' ], 401 );
     }
 
-    // Cancel WooCommerce orders for plan products immediately.
-    if ( function_exists( 'wc_get_orders' ) ) {
-        $plan_product_ids = [ STATSIGHT_PRODUCT_PRO, STATSIGHT_PRODUCT_SHARP ];
-        $orders = wc_get_orders( [
-            'customer_id' => $user_id,
-            'status'      => [ 'wc-completed', 'wc-processing', 'wc-on-hold' ],
-            'limit'       => -1,
-            'return'      => 'ids',
-        ] );
-        foreach ( $orders as $order_id ) {
-            $order = wc_get_order( $order_id );
-            if ( ! $order ) continue;
-            foreach ( $order->get_items() as $item ) {
-                if ( in_array( (int) $item->get_product_id(), $plan_product_ids, true ) ) {
-                    $order->update_status( 'cancelled', 'Account deletion requested by user.' );
-                    break;
-                }
+    // Stop subscriptions renewing. Active ones go to pending-cancel, which ends billing but keeps access until
+    // the paid period runs out (in case they reactivate); anything not yet paid up is cancelled outright.
+    if ( function_exists( 'wcs_get_users_subscriptions' ) ) {
+        foreach ( wcs_get_users_subscriptions( $user_id ) as $subscription ) {
+            if ( $subscription->has_status( 'active' ) && $subscription->can_be_updated_to( 'pending-cancel' ) ) {
+                $subscription->update_status( 'pending-cancel', 'Account deletion requested by user.' );
+            } elseif ( $subscription->has_status( [ 'on-hold', 'pending' ] ) ) {
+                $subscription->update_status( 'cancelled', 'Account deletion requested by user.' );
             }
         }
     }
@@ -8610,6 +8649,15 @@ function statsight_cron_purge_deleted_accounts(): void {
         $wpdb->delete( $wpdb->prefix . 'statsight_push_subscriptions', [ 'user_id' => $user_id ], [ '%d' ] );
         $wpdb->delete( $wpdb->prefix . 'statsight_follows',   [ 'follower_id'  => $user_id ], [ '%d' ] );
         $wpdb->delete( $wpdb->prefix . 'statsight_follows',   [ 'following_id' => $user_id ], [ '%d' ] );
+
+        // Nothing may keep billing a deleted user (e.g. a subscription re-activated in the meantime).
+        if ( function_exists( 'wcs_get_users_subscriptions' ) ) {
+            foreach ( wcs_get_users_subscriptions( $user_id ) as $subscription ) {
+                if ( ! $subscription->has_status( [ 'cancelled', 'expired', 'trash' ] ) ) {
+                    $subscription->update_status( 'cancelled', 'Account permanently deleted.' );
+                }
+            }
+        }
 
         wp_delete_user( $user_id, 1 );
         error_log( "[xstatiq] Permanently deleted account for user_id={$user_id} after 30-day pending period." );
@@ -9221,7 +9269,7 @@ function statsight_calc_value( array $book_odds, string $side = 'over' ): ?array
  * Main cron callback — evaluate every user's notification rules against
  * the current props data and send emails where thresholds are met.
  *
- * Runs every 10 minutes, 30 seconds after the props refresh cron.
+ * Runs every minute.
  */
 function statsight_cron_send_notifications(): void {
     // Re-schedule next run at the next 1-minute boundary.
@@ -9278,18 +9326,13 @@ function statsight_cron_send_notifications(): void {
 
     error_log( '[Statsight Notif] events found: ' . count( $all_events ) );
 
-    // Load props for every event — fetch fresh from API if cache is cold.
-    // Arbitrage windows close fast so we always want current data.
+    // Use only cached props. The refresh crons keep them current (every 10 minutes, every minute for live
+    // games); fetching here on top of that bought the same odds again every minute.
     $payloads = []; // event_id => payload
     foreach ( $all_events as $event_id => $event ) {
         $cached = get_transient( 'statsight_props2_' . $event_id );
         if ( $cached ) {
             $payloads[ $event_id ] = $cached;
-        } else {
-            $fetched = statsight_fetch_and_cache_props( $event['sport'], $event_id );
-            if ( $fetched && ! is_wp_error( $fetched ) ) {
-                $payloads[ $event_id ] = $fetched;
-            }
         }
     }
 
@@ -9297,6 +9340,11 @@ function statsight_cron_send_notifications(): void {
 
     foreach ( $users_with_rules as $user ) {
         $user_id = (int) $user->ID;
+
+        // Notification rules are a Sharp feature; rules left over from a lapsed plan stay saved but don't fire.
+        if ( statsight_get_user_plan( $user_id ) !== 'sharp' ) {
+            continue;
+        }
 
         $raw   = get_user_meta( $user_id, 'statsight_notif_rules', true );
         $rules = $raw ? json_decode( $raw, true ) : [];
@@ -9756,16 +9804,13 @@ function statsight_cron_send_notifications(): void {
 add_action( 'statsight_send_notifications', 'statsight_cron_send_notifications' );
 
 /**
- * Manual cron trigger URL: /?statsight_run_notif=<key>
- * Key is defined in ACF options or falls back to a hard-coded dev key.
+ * Manual cron trigger URL: /?statsight_run_notif=1 (logged-in admins only).
  */
 add_action( 'init', function (): void {
-    $key = sanitize_text_field( $_GET['statsight_run_notif'] ?? '' );
-    if ( ! $key ) return;
+    if ( empty( $_GET['statsight_run_notif'] ) ) return;
 
-    $valid_key = get_option( 'statsight_notif_trigger_key', 'dev-trigger-2024' );
-    if ( ! hash_equals( $valid_key, $key ) ) {
-        wp_die( 'Invalid key.', 403 );
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_die( 'Not allowed.', 403 );
     }
 
     // Capture error_log output during the run.
