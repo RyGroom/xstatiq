@@ -55,11 +55,23 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
             }
             $nav_links['blog'] = 'Blog';
 
+            // Pages above the user's plan say so in the nav and lead to the pricing page's explanation, rather
+            // than a link that quietly bounces there. Logged-out visitors get plain links (they're asked to log in).
+            $nav_item = function ( string $slug, string $label ) use ( $current_slug ): string {
+                $href  = home_url( '/' . $slug . '/' );
+                $tag   = '';
+                $needs = STATSIGHT_PLAN_PAGES[ $slug ][0] ?? null;
+                if ( $needs && is_user_logged_in() && ! statsight_plan_allows( $needs ) ) {
+                    $href = add_query_arg( 'feature', $slug, home_url( '/pricing/' ) );
+                    $tag  = ' <span class="nav-plan-tag">' . ( $needs === 'pro' ? 'Pro' : 'Sharp' ) . '</span>';
+                }
+                $active = $current_slug === $slug ? ' class="current-menu-item"' : '';
+                return '<li' . $active . '><a class="nav-primary-link" href="' . esc_url( $href ) . '">' . esc_html( $label ) . $tag . '</a></li>';
+            };
+
             echo '<ul>';
             foreach ( $nav_links as $slug => $label ) {
-                $href   = home_url( '/' . $slug . '/' );
-                $active = $current_slug === $slug ? ' class="current-menu-item"' : '';
-                echo '<li' . $active . '><a class="nav-primary-link" href="' . esc_url( $href ) . '">' . esc_html( $label ) . '</a></li>';
+                echo $nav_item( $slug, $label );
             }
             $myaccount_url = function_exists( 'wc_get_page_permalink' ) ? wc_get_page_permalink( 'myaccount' ) : home_url( '/my-account/' );
             if ( is_user_logged_in() ) {
@@ -91,9 +103,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
     <?php
     echo '<ul>';
     foreach ( $nav_links as $slug => $label ) {
-        $href   = home_url( '/' . $slug . '/' );
-        $active = $current_slug === $slug ? ' class="current-menu-item"' : '';
-        echo '<li' . $active . '><a class="nav-primary-link" href="' . esc_url( $href ) . '">' . esc_html( $label ) . '</a></li>';
+        echo $nav_item( $slug, $label );
     }
     if ( is_user_logged_in() ) {
         $active = is_account_page() ? ' class="current-menu-item"' : '';

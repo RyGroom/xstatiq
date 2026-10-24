@@ -91,16 +91,7 @@ $is_loggedin = is_user_logged_in();
             if (!key) return '—';
             // Use the global map if the props page loaded it, otherwise fall back to formatting.
             if (typeof BOOK_LABELS !== 'undefined' && BOOK_LABELS[key]) return BOOK_LABELS[key];
-            const map = {
-                fanduel: 'FanDuel', draftkings: 'DraftKings', betmgm: 'BetMGM',
-                caesars: 'Caesars', bet365: 'Bet365', fanatics: 'Fanatics',
-                espnbet: 'ESPN Bet', williamhill_us: 'Caesars', pointsbetus: 'BetUS',
-                betus: 'BetUS', mybookieag: 'MyBookie', betonlineag: 'BetOnline',
-                superbook: 'SuperBook', unibet_us: 'Unibet', wynnbet: 'WynnBET',
-                betrivers: 'BetRivers', bovada: 'Bovada', ballybet: 'Bally Bet',
-                hardrock: 'Hard Rock Bet', fliff: 'Fliff', prizepicks: 'PrizePicks',
-                underdog_fantasy: 'Underdog',
-            };
+            const map = <?php echo wp_json_encode( statsight_get_book_labels() ); ?>;
             return map[key] || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
         }
 

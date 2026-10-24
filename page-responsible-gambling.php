@@ -11,7 +11,7 @@ get_header();
 
         <header class="legal-page__header">
             <h1 class="legal-page__title">Responsible Gambling</h1>
-            <p class="legal-page__meta">Last updated: <?php echo esc_html( date( 'F j, Y' ) ); ?></p>
+            <p class="legal-page__meta">Last updated: May 30, 2026</p>
         </header>
 
         <div class="legal-page__body">

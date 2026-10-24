@@ -3,7 +3,7 @@ Theme Name: xstatiq
 Theme URI: https://statsight.com/
 Author: Statsight
 Description: Sports prop aggregator — compare betting odds across FanDuel, Fanatics, Bet365, Caesars, and more.
-Version: 9.56
+Version: 9.57
 Text Domain: statsight
 */
 
@@ -281,6 +281,21 @@ img { max-width: 100%; height: auto; }
 }
 
 .site-nav a:hover { color: var(--color-text); }
+
+/* "Pro" / "Sharp" next to nav links the user's plan doesn't include */
+.nav-plan-tag {
+    display: inline-block;
+    margin-left: 0.3em;
+    padding: 0.05em 0.4em;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    font-size: 0.65em;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    vertical-align: 0.15em;
+    color: var(--color-text-muted);
+}
 
 .site-nav .nav-signup-btn {
     display: inline-block;
@@ -6224,6 +6239,19 @@ body.odds-modal-open {
     color: var(--color-text-muted);
     text-align: center;
     font-size: 1.05rem;
+}
+
+/* Pricing page: "X is included with Sharp" when sent here from a locked page */
+.lp-pricing-notice {
+    max-width: 34rem;
+    margin: calc(var(--spacing-2xl) * -0.5) auto var(--spacing-2xl);
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--color-primary);
+    border-radius: var(--radius-md);
+    background: rgba(46, 124, 246, 0.08);
+    color: var(--color-text);
+    font-size: 0.9rem;
+    text-align: center;
 }
 
 .lp-eyebrow {

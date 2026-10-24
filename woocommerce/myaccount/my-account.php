@@ -111,35 +111,43 @@ asort( $all_books );
                         </div>
                         <p class="acct-plan-desc">
                             <?php if ( $plan === 'sharp' ) : ?>
-                                You have full access to all xstatiq features including Watchlist, Parlay Builder, and live EV tracking.
+                                You have every xstatiq feature, including arbitrage, the watchlist and bet tracker, community and notifications.
                             <?php elseif ( $plan === 'pro' ) : ?>
-                                You have access to Pro features including rest days, defense rankings, EV%, and Best Value props.
+                                You have every sportsbook, alternate lines, player intel, odds history, Best Value and AI analysis.
                             <?php else : ?>
                                 You&rsquo;re on the free plan. Upgrade to unlock Pro and Sharp features.
                             <?php endif; ?>
                         </p>
                         <div class="acct-plan-actions">
-                            <a href="<?php echo esc_url( wc_get_endpoint_url( 'orders', '', wc_get_page_permalink( 'myaccount' ) ) ); ?>" class="acct-btn acct-btn--primary">Manage Plan</a>
+                            <?php if ( $plan === 'free' ) : ?>
+                                <a href="<?php echo esc_url( home_url( '/pricing/' ) ); ?>" class="acct-btn acct-btn--primary">See Plans</a>
+                            <?php else : ?>
+                                <?php // Subscriptions is where a plan is changed or cancelled; Orders only lists payments. ?>
+                                <a href="<?php echo esc_url( wc_get_endpoint_url( function_exists( 'wcs_get_users_subscriptions' ) ? 'subscriptions' : 'orders', '', wc_get_page_permalink( 'myaccount' ) ) ); ?>" class="acct-btn acct-btn--primary">Manage Plan</a>
+                            <?php endif; ?>
                         </div>
                     </div>
 
                     <?php if ( $plan !== 'free' ) : ?>
+                        <?php
+                        // Everything the plan includes, lower tiers folded in — minus the "Everything in …" lines and
+                        // the free plan's limits, which paid plans lift.
+                        $plan_features = [];
+                        $free_limits   = [ 'Odds from 3 sportsbooks', 'Main lines' ];
+                        foreach ( statsight_plan_features() as $tier => $tier_features ) {
+                            foreach ( $tier_features['included'] as $item ) {
+                                if ( str_starts_with( $item, 'Everything in' ) || in_array( $item, $free_limits, true ) ) continue;
+                                $plan_features[] = $item;
+                            }
+                            if ( $tier === $plan ) break;
+                        }
+                        ?>
                         <div class="acct-plan-features">
                             <p class="acct-label">Included features</p>
                             <ul class="acct-feature-list">
-                                <li>&#x2713; Props across all sports</li>
-                                <li>&#x2713; Hit rate indicators</li>
-                                <?php if ( in_array( $plan, [ 'pro', 'sharp' ], true ) ) : ?>
-                                    <li>&#x2713; Rest days &amp; B2B detection</li>
-                                    <li>&#x2713; Defense rankings</li>
-                                    <li>&#x2713; EV% calculations</li>
-                                    <li>&#x2713; Best Value props</li>
-                                <?php endif; ?>
-                                <?php if ( $plan === 'sharp' ) : ?>
-                                    <li>&#x2713; Watchlist &amp; prop tracking</li>
-                                    <li>&#x2713; Parlay builder</li>
-                                    <li>&#x2713; Live odds history</li>
-                                <?php endif; ?>
+                                <?php foreach ( $plan_features as $item ) : ?>
+                                    <li>&#x2713; <?php echo wp_kses( $item, [] ); ?></li>
+                                <?php endforeach; ?>
                             </ul>
                         </div>
                     <?php endif; ?>

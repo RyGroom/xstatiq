@@ -11,7 +11,7 @@ get_header();
 
         <header class="legal-page__header">
             <h1 class="legal-page__title">Privacy Policy</h1>
-            <p class="legal-page__meta">Last updated: <?php echo esc_html( date( 'F j, Y' ) ); ?></p>
+            <p class="legal-page__meta">Last updated: October 24, 2026</p>
         </header>
 
         <div class="legal-page__body">
@@ -24,13 +24,17 @@ get_header();
             <section class="legal-section">
                 <h2>2. Information We Collect</h2>
                 <h3>Account Information</h3>
-                <p>When you create an account or make a purchase, we collect your name, email address, and billing information. Payment details are processed by our payment provider (Stripe) and are not stored on our servers.</p>
+                <p>When you create an account or make a purchase, we collect your name, email address, and billing information. Card and PayPal details are handled by our payment providers (see Data Sharing) and are not stored on our servers.</p>
+                <h3>Picks, Alerts and Questions</h3>
+                <p>We store the props you save to your watchlist and collections, their results, your alert settings and your sportsbook preferences. If you use Ask AI or AI Prop Analysis, the question you type and the odds and stats it concerns are sent to our AI provider to generate the answer.</p>
+                <h3>Public Profile</h3>
+                <p>If you choose to make your watchlist, pick record or collections public, your display name and those picks are visible to other xstatiq users on the Community page. Each is private unless you turn it on, and you can turn it off at any time in your account.</p>
                 <h3>Usage Data</h3>
                 <p>We automatically collect information about how you interact with xstatiq, including pages visited, features used, browser type, IP address, and referring URLs.</p>
                 <h3>Push Notifications</h3>
                 <p>If you opt in to push notifications, we store a subscription token associated with your browser to deliver alerts. You can revoke this permission at any time through your browser settings.</p>
                 <h3>Cookies</h3>
-                <p>We use cookies and similar technologies to keep you logged in, remember your preferences, and analyze site traffic. We do not use third-party advertising cookies.</p>
+                <p>We use cookies and similar technologies to keep you logged in, remember your preferences, and analyze site traffic. Traffic analytics run through Google Tag Manager, which may set Google analytics cookies. We do not use third-party advertising cookies.</p>
             </section>
 
             <section class="legal-section">
@@ -50,16 +54,22 @@ get_header();
                 <h2>4. Data Sharing</h2>
                 <p>We share your information only with trusted service providers necessary to operate xstatiq, including:</p>
                 <ul>
-                    <li><strong>Stripe</strong> — payment processing</li>
+                    <li><strong>WooPayments (powered by Stripe)</strong> — card payment processing</li>
+                    <li><strong>PayPal</strong> — PayPal payments</li>
                     <li><strong>WooCommerce</strong> — subscription management</li>
-                    <li><strong>Hosting providers</strong> — server infrastructure</li>
+                    <li><strong>Anthropic</strong> — generates Ask AI and AI Prop Analysis answers from the questions and data described above</li>
+                    <li><strong>OpenAI</strong> — checks the names you give public collections for offensive language</li>
+                    <li><strong>Google (Tag Manager and Analytics)</strong> — site traffic analytics</li>
+                    <li><strong>Browser push services</strong> (from Google, Apple or Mozilla, depending on your browser) — deliver push notifications you opt in to</li>
+                    <li><strong>Hosting providers</strong> — server infrastructure and email delivery</li>
                 </ul>
                 <p>We may also disclose information if required by law or to protect the rights and safety of xstatiq and its users.</p>
             </section>
 
             <section class="legal-section">
                 <h2>5. Data Retention</h2>
-                <p>We retain your account information for as long as your account is active or as needed to provide services. You may request deletion of your account and associated data at any time by contacting us.</p>
+                <p>We retain your account information for as long as your account is active or as needed to provide services.</p>
+                <p>You can delete your account yourself under <strong>Account &rarr; Delete Account</strong>. Your subscription stops renewing straight away and your account is scheduled for deletion in 30 days; until then you can restore it with the link in the confirmation email. After 30 days your account, watchlist, picks, collections, alerts and push subscriptions are permanently deleted. We keep order and payment records we are required to retain for tax and accounting. You can also ask us to delete your data by contacting us.</p>
             </section>
 
             <section class="legal-section">

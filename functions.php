@@ -321,7 +321,7 @@ function statsight_get_book_labels(): array {
         'fanatics'         => 'Fanatics',
         'espnbet'          => 'theScore Bet',
         'williamhill_us'   => 'Caesars',
-        'pointsbetus'      => 'BetUS',
+        'pointsbetus'      => 'PointsBet',
         'betus'            => 'BetUS',
         'mybookieag'       => 'MyBookie',
         'betonlineag'      => 'BetOnline',
@@ -511,13 +511,92 @@ function statsight_require_plan( string $required ): void {
  * @param string $required 'pro' or 'sharp'
  */
 function statsight_require_plan_redirect( string $required ): void {
-    $hierarchy = [ 'free' => 0, 'pro' => 1, 'sharp' => 2 ];
-    $user_plan = statsight_get_user_plan();
+    if ( statsight_plan_allows( $required ) ) {
+        return;
+    }
+    $page = get_post_field( 'post_name', get_queried_object_id() );
 
-    if ( ( $hierarchy[ $user_plan ] ?? 0 ) < ( $hierarchy[ $required ] ?? 0 ) ) {
-        wp_safe_redirect( home_url( '/pricing/' ) );
+    // Logged out: they may already have the plan, so log in and come back here.
+    if ( ! is_user_logged_in() ) {
+        $login = function_exists( 'wc_get_page_permalink' ) ? wc_get_page_permalink( 'myaccount' ) : wp_login_url();
+        wp_safe_redirect( add_query_arg( 'redirect_to', rawurlencode( home_url( '/' . $page . '/' ) ), $login ) );
         exit;
     }
+    // Logged in on a lower plan: the pricing page says which plan includes this page.
+    wp_safe_redirect( add_query_arg( 'feature', $page, home_url( '/pricing/' ) ) );
+    exit;
+}
+
+/** Whether the current user's plan is at least $required ('free', 'pro' or 'sharp'). */
+function statsight_plan_allows( string $required ): bool {
+    $hierarchy = [ 'free' => 0, 'pro' => 1, 'sharp' => 2 ];
+    return ( $hierarchy[ statsight_get_user_plan() ] ?? 0 ) >= ( $hierarchy[ $required ] ?? 0 );
+}
+
+/** Pages that need a paid plan: slug => [ plan, name used on the pricing page ]. */
+const STATSIGHT_PLAN_PAGES = [
+    'best-value' => [ 'pro',   'Best Value' ],
+    'ask'        => [ 'pro',   'Ask AI' ],
+    'watchlist'  => [ 'sharp', 'The watchlist' ],
+    'community'  => [ 'sharp', 'Community' ],
+];
+
+/**
+ * What each plan includes, for the pricing cards and the account page. Keep in step with the plan checks
+ * (statsight_require_plan* and the props page's plan gates).
+ *
+ * @return array<string, array{included: string[], locked: string[]}>
+ */
+function statsight_plan_features(): array {
+    return [
+        'free'  => [
+            'included' => [
+                'All props, all sports',
+                'Odds from 3 sportsbooks',
+                'Main lines',
+                'EV% on every prop',
+                'Rosters &amp; injury reports',
+            ],
+            'locked'   => [
+                'Every sportsbook &amp; alternate lines',
+                'Player intel &amp; hit rates',
+                'Odds history charts',
+                'Best Value finder',
+                'AI analysis &amp; Ask AI',
+                'Arbitrage finder',
+            ],
+        ],
+        'pro'   => [
+            'included' => [
+                'Everything in Free',
+                'Every sportsbook',
+                'Alternate lines',
+                'Player intel &amp; hit rates',
+                'Odds history charts',
+                'Best Value finder &amp; Market view',
+                'AI prop analysis &amp; Ask AI',
+                'Target-odds alerts on any prop',
+            ],
+            'locked'   => [
+                'Arbitrage finder',
+                'Watchlist, bet tracker &amp; CLV',
+                'Community &amp; leaderboard',
+                'Notification rules',
+            ],
+        ],
+        'sharp' => [
+            'included' => [
+                'Everything in Pro',
+                'Arbitrage finder',
+                'Sharp line-move view',
+                'Watchlist &amp; bet tracker',
+                'Closing line value tracking',
+                'Community &amp; leaderboard',
+                'Best Value, EV, arb &amp; line-move notifications',
+            ],
+            'locked'   => [],
+        ],
+    ];
 }
 
 /**
@@ -1605,6 +1684,64 @@ function statsight_inline_globals(): void {
     echo "<script>function escHtml(s){const d=document.createElement('div');d.appendChild(document.createTextNode(String(s??'')));return d.innerHTML;}</script>\n";
 }
 add_action( 'wp_head', 'statsight_inline_globals' );
+
+/**
+ * Meta description plus Open Graph / Twitter tags for link previews. Theme pages have their own descriptions;
+ * blog posts use their excerpt. The image is the app icon until there's a dedicated 1200×630 share image.
+ */
+function statsight_meta_tags(): void {
+    if ( is_404() ) return;
+
+    $pages = [
+        'props'          => 'Compare player prop odds across every major US sportsbook, with hit rates, player intel and live stats.',
+        'best-value'     => 'Player props priced better than the no-vig market consensus, ranked by edge across every US sportsbook.',
+        'ask'            => 'Ask an AI analyst about any player, matchup or prop. Answers come from game logs, live odds and our model.',
+        'watchlist'      => 'Track your player prop picks, results and closing line value across every sport.',
+        'community'      => 'See what other bettors are tracking, follow sharp pickers and climb the leaderboard.',
+        'pricing'        => 'Free, Pro and Sharp plans for xstatiq player prop odds, hit rates, Best Value and arbitrage tools.',
+        'privacy'              => 'How xstatiq collects, uses and protects your information.',
+        'terms'                => 'The terms that govern your use of xstatiq.',
+        'responsible-gambling' => 'Tools and resources for betting responsibly, including where to get help.',
+        'support'              => 'Get help with your xstatiq account, plan or features.',
+    ];
+
+    $title = wp_get_document_title();
+    $url   = home_url( add_query_arg( [] ) );
+    $type  = 'website';
+    if ( is_front_page() ) {
+        $desc = 'xstatiq compares player prop odds across every major US sportsbook and finds the edges: Best Value, arbitrage, hit rates and AI analysis.';
+        $url  = home_url( '/' );
+    } elseif ( is_singular( 'post' ) ) {
+        $desc = get_the_excerpt();
+        $url  = get_permalink();
+        $type = 'article';
+    } else {
+        $slug = is_page() ? get_post_field( 'post_name', get_queried_object_id() ) : '';
+        $desc = $pages[ $slug ] ?? get_bloginfo( 'description' );
+        if ( is_page() ) $url = get_permalink();
+    }
+    $desc  = wp_trim_words( wp_strip_all_tags( (string) $desc ), 40, '…' );
+    $image = get_template_directory_uri() . '/assets/icons/icon-512.png';
+
+    $tags = [
+        [ 'name', 'description', $desc ],
+        [ 'property', 'og:site_name', 'xstatiq' ],
+        [ 'property', 'og:type', $type ],
+        [ 'property', 'og:title', $title ],
+        [ 'property', 'og:description', $desc ],
+        [ 'property', 'og:url', $url ],
+        [ 'property', 'og:image', $image ],
+        [ 'name', 'twitter:card', 'summary' ],
+        [ 'name', 'twitter:title', $title ],
+        [ 'name', 'twitter:description', $desc ],
+        [ 'name', 'twitter:image', $image ],
+    ];
+    foreach ( $tags as [ $attr, $key, $value ] ) {
+        if ( $value === '' ) continue;
+        printf( "<meta %s=\"%s\" content=\"%s\">\n", $attr, esc_attr( $key ), esc_attr( $value ) );
+    }
+}
+add_action( 'wp_head', 'statsight_meta_tags', 1 );
 
 function statsight_enqueue_assets(): void {
     wp_enqueue_style(
@@ -7862,28 +7999,7 @@ function statsight_get_user_pick_record_breakdown( int $user_id ): array {
         'soccer_usa_mls'           => 'MLS',
     ];
 
-    $book_labels = [
-        'fanduel'          => 'FanDuel',
-        'draftkings'       => 'DraftKings',
-        'betmgm'           => 'BetMGM',
-        'caesars'          => 'Caesars',
-        'bet365'           => 'Bet365',
-        'fanatics'         => 'Fanatics',
-        'espnbet'          => 'theScore Bet',
-        'betrivers'        => 'BetRivers',
-        'bovada'           => 'Bovada',
-        'williamhill_us'   => 'Caesars',
-        'pointsbetus'      => 'BetUS',
-        'betonlineag'      => 'BetOnline',
-        'superbook'        => 'SuperBook',
-        'unibet_us'        => 'Unibet',
-        'wynnbet'          => 'WynnBET',
-        'ballybet'         => 'Bally Bet',
-        'hardrockbet'      => 'Hard Rock Bet',
-        'fliff'            => 'Fliff',
-        'prizepicks'       => 'PrizePicks',
-        'underdog_fantasy' => 'Underdog',
-    ];
+    $book_labels = statsight_get_book_labels();
 
     $buckets = [
         'sport'     => [],

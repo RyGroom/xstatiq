@@ -40,7 +40,7 @@ get_header();
                 <div class="lp-feature-card lp-animate-child">
                     <div class="lp-feature-card__icon">&#9889;</div>
                     <h3 class="lp-feature-card__title">Best Value Finder</h3>
-                    <p class="lp-feature-card__desc">We calculate the edge between the best and worst book for every prop. Filter by sport, set your minimum edge, and instantly see where the market is mispriced.</p>
+                    <p class="lp-feature-card__desc">We strip the vig from every book to find a fair price, then show where the best available odds beat it. Filter by sport, set your minimum edge, and instantly see where the market is mispriced.</p>
                 </div>
 
                 <div class="lp-feature-card lp-animate-child">
@@ -58,7 +58,7 @@ get_header();
                 <div class="lp-feature-card lp-animate-child">
                     <div class="lp-feature-card__icon">&#128155;</div>
                     <h3 class="lp-feature-card__title">Watchlist</h3>
-                    <p class="lp-feature-card__desc">Save props from any game with one click. Track your picks across all sports, build parlays, and share your watchlist with the community.</p>
+                    <p class="lp-feature-card__desc">Save props from any game with one click. Track your picks, results and closing line value across all sports, group them into collections, and share them with the community.</p>
                 </div>
 
                 <div class="lp-feature-card lp-animate-child">
@@ -100,35 +100,35 @@ get_header();
                             <td>Points O/U 24.5</td>
                             <td>DraftKings</td>
                             <td>+115</td>
-                            <td><span class="lp-edge-badge">+340</span></td>
+                            <td><span class="lp-edge-badge">+6.8%</span></td>
                         </tr>
                         <tr>
                             <td>████ ██████████</td>
                             <td>Strikeouts O/U 7.5</td>
                             <td>FanDuel</td>
                             <td>+105</td>
-                            <td><span class="lp-edge-badge">+290</span></td>
+                            <td><span class="lp-edge-badge">+5.9%</span></td>
                         </tr>
                         <tr>
                             <td>███████ ████████</td>
                             <td>Assists O/U 8.5</td>
                             <td>Bet365</td>
                             <td>-108</td>
-                            <td><span class="lp-edge-badge">+255</span></td>
+                            <td><span class="lp-edge-badge">+5.1%</span></td>
                         </tr>
                         <tr>
                             <td>██████ ████</td>
                             <td>Rushing Yds O/U 72.5</td>
                             <td>Caesars</td>
                             <td>+110</td>
-                            <td><span class="lp-edge-badge">+220</span></td>
+                            <td><span class="lp-edge-badge">+4.4%</span></td>
                         </tr>
                         <tr>
                             <td>████ ████████</td>
                             <td>Rebounds O/U 9.5</td>
                             <td>FanDuel</td>
                             <td>-110</td>
-                            <td><span class="lp-edge-badge">+185</span></td>
+                            <td><span class="lp-edge-badge">+3.7%</span></td>
                         </tr>
                     </tbody>
                 </table>
@@ -150,70 +150,7 @@ get_header();
             <h2 class="lp-section-title">Simple pricing</h2>
             <p class="lp-section-sub">No hidden fees. Cancel anytime.</p>
 
-            <div class="lp-pricing__grid lp-animate-group">
-
-                <div class="lp-plan lp-animate-child">
-                    <div class="lp-plan__header">
-                        <h3 class="lp-plan__name">Free</h3>
-                        <div class="lp-plan__price"><span class="lp-plan__amount">$0</span><span class="lp-plan__period">/mo</span></div>
-                        <p class="lp-plan__tagline">Try before you commit</p>
-                    </div>
-                    <ul class="lp-plan__features">
-                        <li>All props — all sports</li>
-                        <li>Odds from 3 sportsbooks</li>
-                        <li>Fixed lines (no adjustments)</li>
-                        <li>Sport filter</li>
-                        <li class="lp-plan__feature--locked">Adjustable lines</li>
-                        <li class="lp-plan__feature--locked">Player intel &amp; hit rates</li>
-                        <li class="lp-plan__feature--locked">Odds history charts</li>
-                        <li class="lp-plan__feature--locked">Best Value finder</li>
-                        <li class="lp-plan__feature--locked">Arbitrage finder</li>
-                    </ul>
-                    <a href="<?php echo esc_url( function_exists( 'wc_get_page_permalink' ) ? wc_get_page_permalink( 'myaccount' ) : home_url( '/my-account/' ) ); ?>" class="lp-btn lp-btn--outline lp-btn--full">Get started free</a>
-                </div>
-
-                <div class="lp-plan lp-plan--featured lp-animate-child">
-                    <div class="lp-plan__badge">Most popular</div>
-                    <div class="lp-plan__header">
-                        <h3 class="lp-plan__name">Pro</h3>
-                        <div class="lp-plan__price"><span class="lp-plan__amount">$9<sup class="lp-plan__cents">.99</sup></span><span class="lp-plan__period">/mo</span></div>
-                        <p class="lp-plan__tagline">Everything you need to find edges</p>
-                    </div>
-                    <ul class="lp-plan__features">
-                        <li>All props — all sports</li>
-                        <li>Full multi-book odds table</li>
-                        <li>Adjustable lines</li>
-                        <li>Player intel &amp; hit rates</li>
-                        <li>Odds history charts</li>
-                        <li>Roster &amp; injury reports</li>
-                        <li>Best Value finder</li>
-                        <li>AI Analysis</li>
-                        <li class="lp-plan__feature--locked">Arbitrage finder</li>
-                        <li class="lp-plan__feature--locked">Bet tracker &amp; CLV</li>
-                        <li class="lp-plan__feature--locked">EV% display</li>
-                        <li class="lp-plan__feature--locked">Notifications</li>
-                    </ul>
-                    <a href="<?php echo esc_url( add_query_arg( [ 'add-to-cart' => 26 ], wc_get_checkout_url() ) ); ?>" class="lp-btn lp-btn--primary lp-btn--full">Start <strong>30-day free trial</strong></a>
-                </div>
-
-                <div class="lp-plan lp-animate-child">
-                    <div class="lp-plan__header">
-                        <h3 class="lp-plan__name">Sharp</h3>
-                        <div class="lp-plan__price"><span class="lp-plan__amount">$19<sup class="lp-plan__cents">.99</sup></span><span class="lp-plan__period">/mo</span></div>
-                        <p class="lp-plan__tagline">For serious bettors</p>
-                    </div>
-                    <ul class="lp-plan__features">
-                        <li>Everything in Pro</li>
-                        <li>Arbitrage finder</li>
-                        <li>Bet tracker &amp; watchlist</li>
-                        <li>Closing line value tracking</li>
-                        <li>EV% display</li>
-                        <li>Best Value &amp; arb notifications</li>
-                    </ul>
-                    <a href="<?php echo esc_url( add_query_arg( [ 'add-to-cart' => 27 ], wc_get_checkout_url() ) ); ?>" class="lp-btn lp-btn--outline lp-btn--full">Start <strong>30-day free trial</strong></a>
-                </div>
-
-            </div>
+            <?php get_template_part( 'template-parts/plan-cards', null, [ 'heading' => 'h3', 'animate' => true ] ); ?>
         </div>
     </section>
 

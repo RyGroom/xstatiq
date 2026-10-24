@@ -11,7 +11,7 @@ get_header();
 
         <header class="legal-page__header">
             <h1 class="legal-page__title">Terms of Service</h1>
-            <p class="legal-page__meta">Last updated: <?php echo esc_html( date( 'F j, Y' ) ); ?></p>
+            <p class="legal-page__meta">Last updated: October 24, 2026</p>
         </header>
 
         <div class="legal-page__body">
@@ -34,7 +34,7 @@ get_header();
 
             <section class="legal-section">
                 <h2>4. Payments and Refunds</h2>
-                <p>All payments are processed securely through Stripe. Subscription fees are non-refundable except where required by law. If you believe you have been charged in error, contact us within 30 days at <a href="mailto:info@xstatiq.io">info@xstatiq.io</a>.</p>
+                <p>All payments are processed securely through WooPayments (powered by Stripe) or PayPal. Subscription fees are non-refundable except where required by law. If you believe you have been charged in error, contact us within 30 days at <a href="mailto:info@xstatiq.io">info@xstatiq.io</a>.</p>
             </section>
 
             <section class="legal-section">
