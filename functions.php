@@ -139,7 +139,11 @@ function statsight_create_odds_history_table(): void {
 
     // v20: CLV becomes implied-probability points (it was a raw American-odds difference, so +105 against a
     // -110 close read "+215"). The old value is saved odds minus closing odds, which gives back the close.
-    if ( $current_db < 20 ) {
+    // Runs once: admin_init also fires on every admin-ajax request, so concurrent requests could otherwise
+    // convert a row twice. add_option() is the lock (it fails if the option exists) and the column type
+    // shows whether the conversion already happened.
+    $clv_type = (string) $wpdb->get_var( "SELECT DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{$watchlist_table}' AND COLUMN_NAME = 'clv'" );
+    if ( $current_db < 20 && strtolower( $clv_type ) === 'smallint' && add_option( 'statsight_clv_v20_migrating', time(), '', 'no' ) ) {
         $wpdb->query( "ALTER TABLE {$watchlist_table} MODIFY clv DECIMAL(5,2) DEFAULT NULL" );
         foreach ( $wpdb->get_results( "SELECT id, odds, clv FROM {$watchlist_table} WHERE clv IS NOT NULL", ARRAY_A ) as $r ) {
             $closing = (int) $r['odds'] - (int) $r['clv'];
@@ -957,6 +961,26 @@ function statsight_espn_scoring_events( string $sport, array $summary ): array {
     return $events;
 }
 
+/**
+ * Whether a player took part in a finished game, from its summary: soccer's lineups (starters and subs who came
+ * on), otherwise the box score, which lists only players who played. Null when the summary doesn't say.
+ */
+function statsight_summary_player_appeared( string $sport, array $summary, string $norm_player ): ?bool {
+    $names = [];
+    if ( str_starts_with( $sport, 'soccer' ) ) {
+        foreach ( $summary['rosters'] ?? [] as $team ) {
+            foreach ( $team['roster'] ?? [] as $r ) {
+                if ( ! empty( $r['starter'] ) || ! empty( $r['subbedIn'] ) ) {
+                    $names[] = statsight_normalize_name( $r['athlete']['displayName'] ?? '' );
+                }
+            }
+        }
+    } else {
+        $names = array_map( 'statsight_normalize_name', array_keys( statsight_boxscore_players( $summary ) ) );
+    }
+    return $names ? in_array( $norm_player, $names, true ) : null;
+}
+
 /** True when a scoring event (or play text) belongs to the given normalized player name. */
 function statsight_scoring_event_is( array $event, string $norm_player ): bool {
     if ( $event['scorer'] !== null ) {
@@ -979,6 +1003,15 @@ function statsight_settle_anytime_scorer( array $entry ): ?array {
     $events = statsight_espn_scoring_events( $sport, $summary );
     $norm   = statsight_normalize_name( $entry['player'] ?? '' );
     $mk     = preg_replace( '/_alternate$/', '', $entry['market_key'] ?? '' );
+
+    // A player who didn't play is void, as books settle it, not a "didn't score".
+    $scored_any = false;
+    foreach ( $events as $event ) {
+        if ( statsight_scoring_event_is( $event, $norm ) ) { $scored_any = true; break; }
+    }
+    if ( ! $scored_any && statsight_summary_player_appeared( $sport, $summary, $norm ) === false ) {
+        return [ 'result' => 'void', 'actual' => null ];
+    }
 
     if ( in_array( $mk, [ 'player_1st_td', 'player_goal_scorer_first', 'player_first_goal_scorer' ], true ) ) {
         $scored = $events && statsight_scoring_event_is( $events[0], $norm );
@@ -1006,6 +1039,9 @@ function statsight_settle_first_basket( array $entry ): ?array {
     if ( ! $summary ) return null;
 
     $norm = statsight_normalize_name( $entry['player'] ?? '' );
+    if ( statsight_summary_player_appeared( $entry['sport'] ?? '', $summary, $norm ) === false ) {
+        return [ 'result' => 'void', 'actual' => null ]; // didn't play
+    }
     foreach ( $summary['plays'] ?? [] as $play ) {
         if ( empty( $play['scoringPlay'] ) ) continue;
         if ( str_contains( strtolower( $play['type']['text'] ?? '' ), 'free throw' ) ) continue;
@@ -1118,7 +1154,7 @@ function statsight_settle_mma( array $entry ): ?array {
     if ( $game_result === 'D' || str_contains( $method_raw, 'draw' ) ) {
         return $done( $market_key === 'h2h' ? 'push' : 'loss' );
     }
-    if ( str_contains( $method_raw, 'contest' ) || str_contains( $method_raw, 'nc' ) ) {
+    if ( str_contains( $method_raw, 'contest' ) || preg_match( '/\bnc\b/', $method_raw ) ) {
         return $done( 'void' );
     }
     if ( ! in_array( $game_result, [ 'W', 'L' ], true ) ) return null;
@@ -1223,16 +1259,22 @@ function statsight_find_logged_game( string $sport, string $player, string $game
     $log = statsight_player_season_log( $sport, $player );
     if ( $log === null ) return null;
 
-    // Older games live in an earlier season's log: ESPN numbers seasons by the year they end in.
+    // Older games live in an earlier season's log. ESPN numbers NBA/NHL seasons by the year they end in and
+    // NFL/MLB seasons by the year they start in, so try the neighbouring years.
     if ( ! $log || $day < $log[0]['date_et'] ) {
         $year = (int) substr( $day, 0, 4 );
-        foreach ( [ $year + 1, $year ] as $season ) {
+        $covered = false;
+        foreach ( [ $year + 1, $year, $year - 1 ] as $season ) {
             $older = statsight_player_season_log( $sport, $player, $season );
             if ( $older && $older[0]['date_et'] <= $day && end( $older )['date_et'] >= $day ) {
-                $log = $older;
+                $log     = $older;
+                $covered = true;
                 break;
             }
         }
+        // No season log spans that date: we can't tell, which isn't the same as "didn't play".
+        // (A game this recent the runner retries, then voids after 3 days.)
+        if ( ! $covered ) return null;
     }
 
     $best = null;
@@ -1299,7 +1341,7 @@ add_action( 'statsight_run_settlement', 'statsight_run_settlement' );
 
 /**
  * Admin-only: re-grade already-settled picks with the current settlement logic.
- * /wp-admin/admin-post.php?action=statsight_regrade_picks[&from=<id>]
+ * /wp-admin/admin-post.php?action=statsight_regrade_picks (asks for confirmation first)
  * Works through rows in id order for about 60 seconds per request and links to the next batch. A pick ESPN
  * can't answer for any more keeps its old result.
  */
@@ -1311,6 +1353,12 @@ function statsight_regrade_picks_handler(): void {
     $table = $wpdb->prefix . 'statsight_watchlist';
     $from  = (int) ( $_GET['from'] ?? 0 );
     $until = time() + 60;
+
+    // It rewrites results, so a bare link (or an <img> on another site) mustn't trigger it: confirm first.
+    if ( ! wp_verify_nonce( $_GET['_wpnonce'] ?? '', 'statsight_regrade_picks' ) ) {
+        $go = wp_nonce_url( admin_url( 'admin-post.php?action=statsight_regrade_picks&from=' . $from ), 'statsight_regrade_picks' );
+        wp_die( '<p>Re-grade settled picks with the current settlement logic?</p><p><a class="button button-primary" href="' . esc_url( $go ) . '">Start re-grade</a></p>', 'Re-grade picks' );
+    }
 
     header( 'Content-Type: text/plain; charset=utf-8' );
     $rows = $wpdb->get_results( $wpdb->prepare(
@@ -1340,7 +1388,7 @@ function statsight_regrade_picks_handler(): void {
     echo "\nChanged {$changed} pick(s), up to id {$last}.\n";
     $more = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE result IS NOT NULL AND id > %d", $last ) );
     echo $more
-        ? "{$more} more to check: " . admin_url( 'admin-post.php?action=statsight_regrade_picks&from=' . $last ) . "\n"
+        ? "{$more} more to check: " . wp_nonce_url( admin_url( 'admin-post.php?action=statsight_regrade_picks&from=' . $last ), 'statsight_regrade_picks' ) . "\n"
         : "All settled picks checked.\n";
     exit;
 }
@@ -1615,7 +1663,7 @@ function statsight_cron_refresh_live_props(): void {
 
                 // Keyed by normalized name so "Nikola Jokić" matches the odds feed's "Nikola Jokic".
                 foreach ( statsight_boxscore_players( $summary ?: [] ) as $name => $p ) {
-                    $boxscore_stats[ $espn_id ][ statsight_normalize_name( $name ) ] = statsight_boxscore_market_values( $p['named'] );
+                    $boxscore_stats[ $espn_id ][ statsight_normalize_name( $name ) ] = statsight_boxscore_market_values( $p );
                 }
             }
 
@@ -3291,7 +3339,7 @@ function statsight_ajax_get_live_boxscore(): void {
     // Label => value per player, plus '_v': each market's current number (so NFL rushing and receiving yards,
     // which share the "YDS" label, each get their own figure).
     foreach ( statsight_boxscore_players( $sum_data ) as $name => $p ) {
-        $player_stats[ $name ] = $p['stats'] + [ '_v' => statsight_boxscore_market_values( $p['named'] ) ];
+        $player_stats[ $name ] = $p['stats'] + [ '_v' => statsight_boxscore_market_values( $p ) ];
     }
 
     // Cache for 45 seconds — live stats update frequently.
@@ -4496,7 +4544,8 @@ function statsight_fetch_player_gamelog( string $sport, string $player_name, str
     foreach ( $log as $g ) {
         $stats = [];
         foreach ( $cols as $c ) {
-            $stats[ $c ] = $g['stats'][ $c ] ?? '—';
+            // Columns are ESPN stat names where labels repeat (football, pitchers) and labels elsewhere.
+            $stats[ $c ] = $g['named'][ $c ] ?? $g['stats'][ $c ] ?? '—';
         }
         $gamelog[] = [
             'date'     => $g['date'],
@@ -4513,9 +4562,10 @@ function statsight_fetch_player_gamelog( string $sport, string $player_name, str
  * Every player's stats from an ESPN game summary's box score, merged across stat groups (football splits passing,
  * rushing, receiving…; baseball batting and pitching). Keyed by ESPN display name.
  * 'named' uses the game-log stat names so statsight_market_stat_value() works on it; 'stats' is by column label
- * for display (first group wins a repeated label).
+ * for display (first group wins a repeated label). Baseball pitching lines go in 'pitching' instead, since a
+ * two-way player's batting and pitching groups share names (strikeouts, hits, walks).
  *
- * @return array<string, array{id: string, named: array, stats: array}>
+ * @return array<string, array{id: string, named: array, pitching: array, stats: array}>
  */
 function statsight_boxscore_players( array $summary ): array {
     // Box-score keys that differ from the game log's.
@@ -4524,21 +4574,22 @@ function statsight_boxscore_players( array $summary ): array {
     $players = [];
     foreach ( $summary['boxscore']['players'] ?? [] as $team_block ) {
         foreach ( $team_block['statistics'] ?? [] as $group ) {
-            $keys   = $group['keys']   ?? [];
-            $labels = $group['labels'] ?? [];
+            $keys     = $group['keys']   ?? [];
+            $labels   = $group['labels'] ?? [];
+            $bucket   = in_array( 'fullInnings.partInnings', $keys, true ) ? 'pitching' : 'named';
             foreach ( $group['athletes'] ?? [] as $athlete ) {
                 $name  = $athlete['athlete']['displayName'] ?? '';
                 $stats = $athlete['stats'] ?? [];
                 if ( ! $name || ( $athlete['didNotPlay'] ?? false ) || ! $stats ) continue;
 
-                $p = $players[ $name ] ?? [ 'id' => (string) ( $athlete['athlete']['id'] ?? '' ), 'named' => [], 'stats' => [] ];
+                $p = $players[ $name ] ?? [ 'id' => (string) ( $athlete['athlete']['id'] ?? '' ), 'named' => [], 'pitching' => [], 'stats' => [] ];
                 foreach ( $stats as $i => $value ) {
                     $key = $keys[ $i ] ?? null;
                     if ( $key === 'completions/passingAttempts' ) {
                         // "18/27"
                         [ $p['named']['completions'], $p['named']['passingAttempts'] ] = array_pad( explode( '/', (string) $value ), 2, null );
-                    } elseif ( $key !== null && ! isset( $p['named'][ $aliases[ $key ] ?? $key ] ) ) {
-                        $p['named'][ $aliases[ $key ] ?? $key ] = $value;
+                    } elseif ( $key !== null && ! isset( $p[ $bucket ][ $aliases[ $key ] ?? $key ] ) ) {
+                        $p[ $bucket ][ $aliases[ $key ] ?? $key ] = $value;
                     }
                     if ( isset( $labels[ $i ] ) && ! isset( $p['stats'][ $labels[ $i ] ] ) ) {
                         $p['stats'][ $labels[ $i ] ] = $value;
@@ -4551,12 +4602,17 @@ function statsight_boxscore_players( array $summary ): array {
     return $players;
 }
 
+/** The box-score stats a market reads: the pitching line for pitcher markets, everything else otherwise. */
+function statsight_boxscore_stats_for( array $player, string $market_key ): array {
+    return str_starts_with( $market_key, 'pitcher_' ) ? ( $player['pitching'] ?? [] ) : ( $player['named'] ?? [] );
+}
+
 /**
- * Each market's current number for a player, from box-score stats (see statsight_boxscore_players()).
+ * Each market's current number for a player, from a statsight_boxscore_players() entry.
  *
  * @return array<string, float> market_key => value, for markets the box score carries
  */
-function statsight_boxscore_market_values( array $named ): array {
+function statsight_boxscore_market_values( array $player ): array {
     $values = [];
     $keys   = array_merge(
         array_keys( statsight_market_stat_names() ),
@@ -4564,7 +4620,7 @@ function statsight_boxscore_market_values( array $named ): array {
         STATSIGHT_YES_NO_STAT_MARKETS
     );
     foreach ( $keys as $mk ) {
-        $v = statsight_market_stat_value( $mk, $named );
+        $v = statsight_market_stat_value( $mk, statsight_boxscore_stats_for( $player, $mk ) );
         if ( $v !== null ) $values[ $mk ] = $v;
     }
     return $values;
@@ -4746,15 +4802,16 @@ function statsight_ajax_get_player_stats(): void {
             if ( in_array( $state, [ 'in', 'post' ], true ) ) {
                 foreach ( statsight_boxscore_players( $sum_data ) as $p ) {
                     if ( $p['id'] !== (string) $athlete_id ) continue;
+                    $named      = statsight_boxscore_stats_for( $p, $market_key );
                     $game_stats = [];
                     foreach ( $col_labels as $key ) {
-                        $game_stats[ $key ] = $p['named'][ $key ] ?? $p['stats'][ $key ] ?? '—';
+                        $game_stats[ $key ] = $named[ $key ] ?? $p['stats'][ $key ] ?? '—';
                     }
                     $live_stats = [
                         'state' => $state,
                         'stats' => $game_stats,
                         'min'   => $p['stats']['MIN'] ?? null,
-                        'value' => statsight_market_stat_value( $market_key, $p['named'] ),
+                        'value' => statsight_market_stat_value( $market_key, $named ),
                     ];
                     break;
                 }
@@ -7311,7 +7368,9 @@ function statsight_verified_odds( string $event_id, string $market_key, string $
     if ( ! in_array( $direction, [ 'over', 'under' ], true ) ) return null; // e.g. MMA method picks
     $base    = preg_replace( '/_alternate$/', '', $market_key );
     $markets = [ $base, $base . '_alternate' ];
-    $line_key = number_format( (float) $line, 1, '.', '' );
+    // Yes/no props are stored under "yn" or "0.5"; numeric lines as "24.5" / "220.0".
+    $norm_line = fn( $l ) => is_numeric( $l ) ? number_format( (float) $l, 1, '.', '' ) : 'yn';
+    $line_keys = in_array( $norm_line( $line ), [ 'yn', '0.5' ], true ) ? [ 'yn', '0.5' ] : [ $norm_line( $line ) ];
 
     $known   = false;
     $current = null;
@@ -7319,10 +7378,12 @@ function statsight_verified_odds( string $event_id, string $market_key, string $
     foreach ( $markets as $mk ) {
         if ( ! isset( $payload['props'][ $mk ][ $player ] ) ) continue;
         $known = true;
-        $price = $payload['props'][ $mk ][ $player ][ $line_key ][ $book ][ $direction ] ?? null;
-        if ( $price !== null ) {
-            $current = (int) $price;
-            break;
+        foreach ( $line_keys as $lk ) {
+            $price = $payload['props'][ $mk ][ $player ][ $lk ][ $book ][ $direction ] ?? null;
+            if ( $price !== null ) {
+                $current = (int) $price;
+                break 2;
+            }
         }
     }
 
@@ -7341,7 +7402,7 @@ function statsight_verified_odds( string $event_id, string $market_key, string $
     $since  = gmdate( 'Y-m-d H:i:s', time() - 20 * MINUTE_IN_SECONDS );
     foreach ( $rows as $r ) {
         $known = true;
-        if ( $r['book_key'] !== $book || number_format( (float) $r['line'], 1, '.', '' ) !== $line_key || $r['price'] === null ) continue;
+        if ( $r['book_key'] !== $book || ! in_array( $norm_line( $r['line'] ), $line_keys, true ) || $r['price'] === null ) continue;
         $latest ??= (int) $r['price'];
         if ( $r['recorded_at'] >= $since ) $recent[] = (int) $r['price'];
     }
@@ -7603,7 +7664,7 @@ function statsight_ajax_watchlist_game_status(): void {
                     // Same shape as statsight_ajax_get_live_boxscore(): labels plus '_v', each market's number.
                     $player_stats = [];
                     foreach ( statsight_boxscore_players( $bs_data ) as $name => $p ) {
-                        $player_stats[ $name ] = $p['stats'] + [ '_v' => statsight_boxscore_market_values( $p['named'] ) ];
+                        $player_stats[ $name ] = $p['stats'] + [ '_v' => statsight_boxscore_market_values( $p ) ];
                     }
 
                     $ttl      = $matched_state === 'final' ? 10 * MINUTE_IN_SECONDS : 45;
@@ -9584,8 +9645,9 @@ function statsight_cron_send_notifications(): void {
             }
 
             // ── line_move ─────────────────────────────────────────────────
-            // Props on the user's watchlist whose main line has moved $threshold or more from the line they saved,
-            // before the game starts. Each new line alerts once.
+            // Props on the user's watchlist whose market's main line has moved $threshold or more since they saved
+            // it, before the game starts. The baseline is the main line when the job first sees the pick (the
+            // saved line may be an alternate), kept in a transient per pick. Each new line alerts once.
             if ( $rule_type === 'line_move' ) {
                 global $wpdb;
                 $wl_rows = $wpdb->get_results( $wpdb->prepare(
@@ -9601,7 +9663,14 @@ function statsight_cron_send_notifications(): void {
                     $current = $payload['default_lines'][ $base ][ $wl['player'] ] ?? null;
                     if ( $current === null ) continue;
 
-                    $move = round( abs( (float) $current - (float) $wl['line'] ), 1 );
+                    $baseline_key = 'statsight_lm_base_' . $wl['id'];
+                    $baseline     = get_transient( $baseline_key );
+                    if ( false === $baseline ) {
+                        set_transient( $baseline_key, (string) $current, 14 * DAY_IN_SECONDS );
+                        continue;
+                    }
+
+                    $move = round( abs( (float) $current - (float) $baseline ), 1 );
                     if ( $move < $threshold ) continue;
 
                     $fingerprint = implode( '|', [ 'wl' . $wl['id'], $current ] );
@@ -9613,7 +9682,7 @@ function statsight_cron_send_notifications(): void {
                         'player'  => $wl['player'],
                         'market'  => $wl['market_label'] . ' ' . ucfirst( $wl['direction'] ),
                         'matchup' => $wl['matchup'],
-                        'price'   => "{$wl['line']} " . ( (float) $current > (float) $wl['line'] ? '↑' : '↓' ) . " {$current}",
+                        'price'   => "{$baseline} " . ( (float) $current > (float) $baseline ? '↑' : '↓' ) . " {$current}",
                         'metric'  => "{$move} pts",
                     ];
                 }
@@ -9797,6 +9866,11 @@ add_action( 'init', function (): void {
 
     if ( ! current_user_can( 'manage_options' ) ) {
         wp_die( 'Not allowed.', 403 );
+    }
+    // It sends real emails and pushes, so confirm first rather than run on any request to the URL.
+    if ( ! wp_verify_nonce( $_GET['_wpnonce'] ?? '', 'statsight_run_notif' ) ) {
+        $go = wp_nonce_url( home_url( '/?statsight_run_notif=1' ), 'statsight_run_notif' );
+        wp_die( '<p>Run the notification job now? It sends any alerts that are due.</p><p><a href="' . esc_url( $go ) . '">Run it</a></p>', 'Notification Test' );
     }
 
     // Capture error_log output during the run.
@@ -10060,7 +10134,7 @@ function statsight_ai_live_context( string $sport, string $home, string $away, ?
             $sum_data = json_decode( wp_remote_retrieve_body( $sum_response ), true );
             // Same shape as statsight_ajax_get_live_boxscore(), which shares this cache.
             foreach ( statsight_boxscore_players( $sum_data ) as $name => $p ) {
-                $player_stats[ $name ] = $p['stats'] + [ '_v' => statsight_boxscore_market_values( $p['named'] ) ];
+                $player_stats[ $name ] = $p['stats'] + [ '_v' => statsight_boxscore_market_values( $p ) ];
             }
         }
         set_transient( $boxscore_cache_key, $player_stats, 45 );
