@@ -30,6 +30,7 @@
                     <ul>
                         <li><a class="nav-footer-link" href="<?php echo esc_url( home_url( '/props/' ) ); ?>">Props</a></li>
                         <li><a class="nav-footer-link" href="<?php echo esc_url( home_url( '/best-value/' ) ); ?>">Best Value</a></li>
+                        <li><a class="nav-footer-link" href="<?php echo esc_url( home_url( '/ask/' ) ); ?>">Ask AI</a></li>
                         <li><a class="nav-footer-link" href="<?php echo esc_url( home_url( '/watchlist/' ) ); ?>">Watchlist</a></li>
                         <?php if ( is_user_logged_in() ) : ?>
                         <li><a class="nav-footer-link" href="<?php echo esc_url( home_url( '/community/' ) ); ?>">Community</a></li>

@@ -45,6 +45,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
             $nav_links = [
                 'props'      => 'Props',
                 'best-value' => 'Best Value',
+                'ask'        => 'Ask AI',
                 'watchlist'  => 'Watchlist',
             ];
             if ( is_user_logged_in() ) {

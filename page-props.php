@@ -135,10 +135,7 @@ $first_key = ! empty( $sports ) ? $sports[0]['key'] : '';
 </div><!-- .props-aggregator -->
 
 <?php
-$active_books_raw = get_user_meta( get_current_user_id(), 'statsight_active_books', true );
-$active_books     = ( $active_books_raw && is_string( $active_books_raw ) )
-    ? json_decode( $active_books_raw, true )
-    : null;
+$active_books = statsight_get_active_books( get_current_user_id() );
 ?>
 
 <script>

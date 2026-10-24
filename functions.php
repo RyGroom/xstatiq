@@ -325,7 +325,7 @@ function statsight_get_book_labels(): array {
 
 /** Canonical display-column order for sportsbooks. */
 function statsight_get_book_order(): array {
-    return [ 'fanduel', 'draftkings', 'betmgm', 'caesars', 'bet365', 'fanatics', 'espnbet', 'hardrockbet', 'williamhill_us', 'pointsbetus', 'betus', 'mybookieag', 'betonlineag' ];
+    return [ 'fanduel', 'draftkings', 'betmgm', 'caesars', 'williamhill_us', 'bet365', 'fanatics', 'espnbet', 'hardrockbet', 'pointsbetus', 'betus', 'mybookieag', 'betonlineag' ];
 }
 
 /**
@@ -333,6 +333,35 @@ function statsight_get_book_order(): array {
  * Bally Bet, Fliff and others are only in us2. Each region is billed separately, so this doubles credit use.
  */
 const STATSIGHT_ODDS_REGIONS = 'us,us2';
+
+/**
+ * A user's selected sportsbooks, or null for all books.
+ *
+ * The account page saves one key per book name (e.g. "caesars"), but the Odds API may send another
+ * key for the same book ("williamhill_us"), so each saved key is expanded to every key sharing its
+ * label in statsight_get_book_labels(). Also maps keys that have since been renamed.
+ *
+ * @return string[]|null
+ */
+function statsight_get_active_books( int $user_id ): ?array {
+    $raw   = $user_id ? get_user_meta( $user_id, 'statsight_active_books', true ) : '';
+    $saved = ( $raw && is_string( $raw ) ) ? json_decode( $raw, true ) : null;
+    if ( ! is_array( $saved ) ) {
+        return null;
+    }
+
+    $renamed = [ 'hardrock' => 'hardrockbet' ];
+    $labels  = statsight_get_book_labels();
+    $books   = [];
+    foreach ( $saved as $key ) {
+        $key     = $renamed[ $key ] ?? $key;
+        $books[] = $key;
+        if ( isset( $labels[ $key ] ) ) {
+            $books = array_merge( $books, array_keys( $labels, $labels[ $key ], true ) );
+        }
+    }
+    return array_values( array_unique( $books ) );
+}
 
 /**
  * Normalise a team display name for fuzzy matching against ESPN team names.
@@ -1635,12 +1664,7 @@ function statsight_enqueue_assets(): void {
         true
     );
 
-    $active_books_raw = is_user_logged_in()
-        ? get_user_meta( get_current_user_id(), 'statsight_active_books', true )
-        : '';
-    $active_books = ( $active_books_raw && is_string( $active_books_raw ) )
-        ? json_decode( $active_books_raw, true )
-        : null; // null = all books (default)
+    $active_books = statsight_get_active_books( get_current_user_id() ); // null = all books (default)
 
     wp_localize_script( 'statsight-main', 'statsightData', [
         'ajaxUrl'     => admin_url( 'admin-ajax.php' ),
@@ -6880,7 +6904,7 @@ function statsight_ajax_get_best_value(): void {
     }
 
     $et_date   = ( new DateTime( 'now', new DateTimeZone( 'America/New_York' ) ) )->format( 'Y-m-d' );
-    $cache_key = 'statsight_bestvalue3_' . $sport . '_' . $et_date;
+    $cache_key = 'statsight_bestvalue4_' . $sport . '_' . $et_date;
     $cached    = get_transient( $cache_key );
     if ( false !== $cached ) {
         wp_send_json_success( $cached );
@@ -7104,22 +7128,22 @@ function statsight_ajax_get_best_value(): void {
                     }
                 }
 
-                if ( count( $odds_map ) < 2 ) continue; // need at least 2 books to compare
+                // Keep the prop if either side has 2+ books that disagree. The client builds an over
+                // and an under row from all_odds and recomputes edge/EV over the user's selected books;
+                // these all-book values only set the initial order.
+                $unders = array_filter( array_column( $bk_data, 'under' ), fn( $u ) => $u !== null );
+                $over_differs  = count( $odds_map ) >= 2 && max( $odds_map ) !== min( $odds_map );
+                $under_differs = count( $unders ) >= 2 && max( $unders ) !== min( $unders );
+                if ( ! $over_differs && ! $under_differs ) continue;
+                $value = statsight_calc_value( $bk_data ) ?? statsight_calc_value( $bk_data, 'under' );
+                if ( ! $value || ! $odds_map ) continue;
 
-                // Higher American odds = better payout for the bettor.
-                // Edge = difference between the best and worst number on the board.
-                $best_odds_val  = max( $odds_map );
-                $worst_odds_val = min( $odds_map );
-                $edge           = $best_odds_val - $worst_odds_val;
-
-                if ( $edge <= 0 ) continue;
-
-                $best_bk  = array_search( $best_odds_val,  $odds_map, true );
-                $worst_bk = array_search( $worst_odds_val, $odds_map, true );
+                $best_bk  = $value['best_bk'];
+                $worst_bk = array_search( min( $odds_map ), $odds_map, true );
 
                 $discrepancies[] = [
-                    'edge'        => $edge,
-                    'ev'          => statsight_calc_ev( $odds_map ),
+                    'edge'        => $value['edge'],
+                    'ev'          => $value['ev'],
                     'player'      => $player,
                     'market'      => $market_labels[ $mk ] ?? $mk,
                     'market_key'  => $mk,
@@ -7133,8 +7157,9 @@ function statsight_ajax_get_best_value(): void {
                     'worst_odds'  => $bk_data[ $worst_bk ]['over'],
                     'all_odds'    => array_map(
                         fn( $bk ) => [
-                            'book' => $bk,
-                            'odds' => $bk_data[ $bk ]['over'],
+                            'book'  => $bk,
+                            'odds'  => $bk_data[ $bk ]['over'],
+                            'under' => $bk_data[ $bk ]['under'] ?? null,
                         ],
                         array_keys( $bk_data )
                     ),
@@ -8960,35 +8985,21 @@ function statsight_calc_best_value( array $payload, string $market_key, ?array $
 
         $book_data = $lines[ $default_line ];
 
-        // Collect over odds per book, restricted to the user's active books if set.
-        $over_odds = [];
-        foreach ( $book_data as $bk => $odds ) {
-            if ( $active_books !== null && ! in_array( $bk, $active_books, true ) ) {
-                continue;
-            }
-            if ( isset( $odds['over'] ) && $odds['over'] !== null ) {
-                $over_odds[ $bk ] = (int) $odds['over'];
-            }
-        }
-        if ( count( $over_odds ) < 2 ) {
-            continue; // need at least 2 books to measure edge
+        // Restrict to the user's active books if set.
+        if ( $active_books !== null ) {
+            $book_data = array_intersect_key( $book_data, array_flip( $active_books ) );
         }
 
-        // Edge = raw American odds difference between best and worst book,
-        // matching the calculation used on the Best Value page.
-        $best_odds  = max( $over_odds );
-        $worst_odds = min( $over_odds );
-        $edge       = $best_odds - $worst_odds;
-
-        // Only show the row if the best odds (the favorable bet) is on a selected book.
-        $best_bk  = array_search( $best_odds,  $over_odds, true );
-        $worst_bk = array_search( $worst_odds, $over_odds, true );
-
-        if ( $edge <= 0 ) {
+        // Edge/EV vs the no-vig consensus, matching the Best Value page.
+        $value = statsight_calc_value( $book_data );
+        if ( ! $value || $value['stale'] || $value['edge'] <= 0 ) {
             continue;
         }
-
-        $ev = statsight_calc_ev( $over_odds );
+        $best_bk    = $value['best_bk'];
+        $best_odds  = $value['best_odds'];
+        $worst_odds = min( array_filter( array_column( $book_data, 'over' ), fn( $o ) => $o !== null ) );
+        $edge       = $value['edge'];
+        $ev         = $value['ev'];
 
         $results[] = [
             'player'       => $player,
@@ -9007,38 +9018,77 @@ function statsight_calc_best_value( array $payload, string $market_key, ?array $
     return $results;
 }
 
+/** Assumed bookmaker margin for one-sided markets when no book posts both sides. */
+const STATSIGHT_ONE_SIDED_MARGIN = 1.07;
+
 /**
- * Calculate EV% for a prop relative to the no-vig consensus line.
- * Returns EV% for the best-odds book, or null if insufficient data.
- *
- * EV% = (best_implied_prob × (1 + payout)) - 1, where payout is
- * derived from the no-vig mid across all books.
+ * A best price implying less than this fraction of the consensus probability is treated as a stale
+ * or mismatched line (e.g. +1600 vs a −173 consensus) rather than a real edge.
  */
-function statsight_calc_ev( array $over_odds_by_book ): ?float {
-    if ( count( $over_odds_by_book ) < 2 ) {
+const STATSIGHT_STALE_RATIO = 0.5;
+
+/**
+ * Value of the best price on one side (over or under) against the market's fair (no-vig) probability.
+ *
+ * 1. Each book's fair probability: its implied prob for this side with that book's margin removed,
+ *    using its price on the other side (this / (this + other)). Books with no under (one-sided markets like anytime TD)
+ *    are divided by the median margin of the two-sided books, or STATSIGHT_ONE_SIDED_MARGIN.
+ * 2. Consensus = median fair probability of every book except the best-price book. The median
+ *    keeps one stale or off-market line from skewing it.
+ * 3. edge = consensus − best price's implied prob, in percentage points.
+ *    ev   = consensus × best decimal payout − 1, as a percentage.
+ *
+ * Mirrored in JS by calcValue() in page-best-value.php — keep the two in sync.
+ *
+ * @param array<string, array{over?: int|null, under?: int|null}> $book_odds book key => prices
+ * @param string $side 'over' or 'under'
+ * @return array{best_bk: string, best_odds: int, fair_prob: float, edge: float, ev: float, stale: bool}|null
+ *         null when fewer than two books have a price on this side.
+ */
+function statsight_calc_value( array $book_odds, string $side = 'over' ): ?array {
+    $other   = $side === 'over' ? 'under' : 'over';
+    $to_impl = fn( int $o ): float => $o > 0 ? 100 / ( $o + 100 ) : abs( $o ) / ( abs( $o ) + 100 );
+    $median  = function ( array $xs ): float {
+        sort( $xs );
+        $n = count( $xs );
+        return $n % 2 ? $xs[ intdiv( $n, 2 ) ] : ( $xs[ $n / 2 - 1 ] + $xs[ $n / 2 ] ) / 2;
+    };
+
+    $prices  = [];
+    $margins = [];
+    foreach ( $book_odds as $bk => $odds ) {
+        if ( isset( $odds[ $side ] ) ) {
+            $prices[ $bk ] = (int) $odds[ $side ];
+            if ( isset( $odds[ $other ] ) ) {
+                $margins[ $bk ] = $to_impl( (int) $odds[ $side ] ) + $to_impl( (int) $odds[ $other ] );
+            }
+        }
+    }
+    if ( count( $prices ) < 2 ) {
         return null;
     }
 
-    $to_impl = function ( int $o ): float {
-        return $o > 0 ? 100 / ( $o + 100 ) : abs( $o ) / ( abs( $o ) + 100 );
-    };
+    $one_sided = $margins ? $median( array_values( $margins ) ) : STATSIGHT_ONE_SIDED_MARGIN;
+    $best_odds = max( $prices );
+    $best_bk   = (string) array_search( $best_odds, $prices, true );
 
-    // No-vig mid: average implied across books.
-    $impls  = array_map( fn( $o ) => $to_impl( (int) $o ), $over_odds_by_book );
-    $avg    = array_sum( $impls ) / count( $impls );
+    $fair = [];
+    foreach ( $prices as $bk => $o ) {
+        if ( $bk !== $best_bk ) {
+            $fair[] = $to_impl( $o ) / ( $margins[ $bk ] ?? $one_sided );
+        }
+    }
+    $fair_prob = $median( $fair );
+    $decimal   = $best_odds > 0 ? 1 + $best_odds / 100 : 1 + 100 / abs( $best_odds );
 
-    // Best (highest) odds book.
-    arsort( $over_odds_by_book );
-    $best_odds   = (int) reset( $over_odds_by_book );
-    $best_impl   = $to_impl( $best_odds );
-
-    // Payout = 1 / best_implied - 1
-    $payout = ( 1 / $best_impl ) - 1;
-
-    // EV% = (true_prob × payout) - (1 - true_prob)
-    $ev = round( ( $avg * $payout ) - ( 1 - $avg ), 4 ) * 100;
-
-    return round( $ev, 2 );
+    return [
+        'best_bk'   => $best_bk,
+        'best_odds' => $best_odds,
+        'fair_prob' => $fair_prob,
+        'edge'      => round( ( $fair_prob - $to_impl( $best_odds ) ) * 100, 2 ),
+        'ev'        => round( ( $fair_prob * $decimal - 1 ) * 100, 2 ),
+        'stale'     => $to_impl( $best_odds ) < STATSIGHT_STALE_RATIO * $fair_prob,
+    ];
 }
 
 /**
@@ -9131,8 +9181,7 @@ function statsight_cron_send_notifications(): void {
 
         // Respect the user's active book selection so notifications only fire
         // for books they can actually bet on.
-        $active_books_raw  = get_user_meta( $user_id, 'statsight_active_books', true );
-        $user_active_books = $active_books_raw ? json_decode( $active_books_raw, true ) : null;
+        $user_active_books = statsight_get_active_books( $user_id );
 
         error_log( '[Statsight Notif] evaluating ' . count( $rules ) . ' rule(s) for user ' . $user_id );
 
@@ -9148,6 +9197,12 @@ function statsight_cron_send_notifications(): void {
             $rule_type = $rule['type'] ?? '';
             $threshold = isset( $rule['threshold'] ) ? (float) $rule['threshold'] : 0;
             $sport_filter = $rule['sport'] ?? 'all';
+
+            // best_value thresholds used to be American-odds points (default 100); edge is now
+            // percentage points vs the no-vig consensus (max 20), so old values fall back to the default.
+            if ( $rule_type === 'best_value' && $threshold > 20 ) {
+                $threshold = 3;
+            }
 
             if ( empty( $rule_id ) || empty( $rule_type ) ) {
                 continue;
@@ -9335,20 +9390,13 @@ function statsight_cron_send_notifications(): void {
                             $default_line = $def_lines[ $base_key ][ $player ] ?? null;
                             if ( ! $default_line || ! isset( $lines[ $default_line ] ) ) continue;
 
-                            $over_odds = [];
-                            foreach ( $lines[ $default_line ] as $bk => $odds ) {
-                                if ( isset( $odds['over'] ) && $odds['over'] !== null ) {
-                                    $over_odds[ $bk ] = (int) $odds['over'];
-                                }
-                            }
+                            $value = statsight_calc_value( $lines[ $default_line ] );
+                            if ( ! $value || $value['stale'] || $value['ev'] < $threshold ) continue;
 
-                            $ev = statsight_calc_ev( $over_odds );
-                            if ( $ev === null || $ev < $threshold ) continue;
-
+                            $ev           = $value['ev'];
                             $market_label = $market_labels[ $base_key ] ?? $base_key;
-                            arsort( $over_odds );
-                            $best_bk   = array_key_first( $over_odds );
-                            $best_odds = $over_odds[ $best_bk ];
+                            $best_bk      = $value['best_bk'];
+                            $best_odds    = $value['best_odds'];
 
                             $fingerprint = implode( '|', [ $event_id, $player, $base_key, $today ] );
                             if ( statsight_notif_already_sent( $user_id, $rule_id, $fingerprint ) ) continue;
@@ -10769,3 +10817,6 @@ add_action( 'template_redirect', function (): void {
     exit;
 } );
 
+
+// Ask AI: the analyst page and its tools.
+require_once __DIR__ . '/inc/ask-ai.php';

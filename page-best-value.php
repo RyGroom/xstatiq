@@ -65,8 +65,8 @@ $sports = $result['sports'];
                     <div class="bv-control-group">
                         <label class="bv-control-label" for="bv-min-edge">Min edge</label>
                         <div class="bv-number-input-wrap">
-                            <input type="number" class="bv-number-input" id="bv-min-edge" value="100" min="0" max="2000" step="25">
-                            <span class="bv-number-unit">pts</span>
+                            <input type="number" class="bv-number-input" id="bv-min-edge" value="1" min="0" max="20" step="0.5">
+                            <span class="bv-number-unit">%</span>
                         </div>
                     </div>
                     <div class="bv-control-group">
@@ -87,6 +87,7 @@ $sports = $result['sports'];
                         <label class="bv-control-label" for="bv-sort">Sort by</label>
                         <select class="bv-sort-select" id="bv-sort">
                             <option value="edge">Edge (highest first)</option>
+                            <option value="ev">EV% (highest first)</option>
                             <option value="best_odds">Best odds</option>
                             <option value="sport">Sport</option>
                         </select>
@@ -116,10 +117,7 @@ $sports = $result['sports'];
 </div><!-- .bv-page -->
 
 <?php
-$active_books_raw = get_user_meta( get_current_user_id(), 'statsight_active_books', true );
-$active_books     = ( $active_books_raw && is_string( $active_books_raw ) )
-    ? json_decode( $active_books_raw, true )
-    : null;
+$active_books = statsight_get_active_books( get_current_user_id() );
 ?>
 <script>
 var statsightAjax = {
@@ -127,7 +125,8 @@ var statsightAjax = {
     nonce:       <?php echo wp_json_encode( wp_create_nonce( 'statsight_events' ) ); ?>,
     plan:        <?php echo wp_json_encode( statsight_get_user_plan() ); ?>,
     homeUrl:     <?php echo wp_json_encode( home_url( '/#pricing' ) ); ?>,
-    activeBooks: <?php echo wp_json_encode( $active_books ); ?>
+    activeBooks: <?php echo wp_json_encode( $active_books ); ?>,
+    bookOrder:   <?php echo wp_json_encode( statsight_get_book_order() ); ?>
 };
 var bvSports = <?php echo wp_json_encode( array_map( fn( $s ) => [ 'key' => $s['key'], 'title' => $s['title'] ], $sports ) ); ?>;
 </script>
@@ -140,7 +139,8 @@ var bvSports = <?php echo wp_json_encode( array_map( fn( $s ) => [ 'key' => $s['
     let allRows      = [];   // merged results across all sports
     let sportFilter  = 'all';
     let bookFilter   = '';   // empty = all books
-    let minEdge      = 100;
+    const DEFAULT_MIN_EDGE = 1;   // percentage points vs the no-vig consensus
+    let minEdge      = DEFAULT_MIN_EDGE;
     let minLowestOdds = -1000; // hide props where every book's odds are below this value
     let maxLowestOdds = 1000;  // hide props where no book has odds <= this value
     let sortBy       = 'edge';
@@ -150,6 +150,7 @@ var bvSports = <?php echo wp_json_encode( array_map( fn( $s ) => [ 'key' => $s['
     let refreshTimer = null;
     // "player|marketKey|eventId|line" → watchlist row id
     const watchlistMap = {};
+    let staleHidden = 0;     // rows dropped by the stale-line check in the last getVisible()
 
     const listEl          = document.getElementById('bv-list');
     const metaEl          = document.getElementById('bv-results-meta');
@@ -210,7 +211,7 @@ var bvSports = <?php echo wp_json_encode( array_map( fn( $s ) => [ 'key' => $s['
     // Update the filter count badge on the toggle button
     function updateFilterCount() {
         let count = 0;
-        if (minEdge !== 100) count++;
+        if (minEdge !== DEFAULT_MIN_EDGE) count++;
         if (minLowestOdds !== -500) count++;
         if (maxLowestOdds !== 500) count++;
         if (sortBy !== 'edge') count++;
@@ -309,56 +310,52 @@ var bvSports = <?php echo wp_json_encode( array_map( fn( $s ) => [ 'key' => $s['
 
     // ── Rendering ──────────────────────────────────────────────────────────
     function getVisible() {
-        let rows = allRows;
+        // Each prop becomes an over row and an under row. _odds holds that side's price per book
+        // (price) plus the book's opposite price (other), used to remove its margin.
+        let rows = allRows.flatMap(r => ['over', 'under'].map(side => ({
+            ...r,
+            side,
+            _odds: (r.all_odds || [])
+                .map(o => ({ book: o.book, price: side === 'over' ? o.odds : o.under, other: side === 'over' ? o.under : o.odds }))
+                .filter(o => o.price != null),
+        })));
 
         // Sport filter
         if (sportFilter !== 'all') {
             rows = rows.filter(r => r.sport === sportFilter);
         }
 
-        // Book filter — only show rows where the selected book has the highest odds.
+        // Only the user's selected books count, for display and for edge/EV.
+        const activeBooks = statsightAjax.activeBooks;
+        rows = rows.map(r => ({ ...r, _odds: r._odds.filter(o => !activeBooks || activeBooks.includes(o.book)) }));
+
+        // Book filter — only show rows where the selected book has the best price on that side.
         if (bookFilter) {
             rows = rows.filter(function (r) {
-                const odds = (r.all_odds || []).filter(o => o.odds !== null);
-                const bookOdds = odds.find(o => o.book === bookFilter);
-                if (!bookOdds) return false;
-                const maxOdds = Math.max(...odds.map(o => o.odds));
-                return bookOdds.odds === maxOdds;
+                const bookOdds = r._odds.find(o => o.book === bookFilter);
+                return bookOdds && bookOdds.price === Math.max(...r._odds.map(o => o.price));
             });
         }
 
-        // Odds range filters: operate on visible books, fall back to all books.
+        // Odds range filters.
         rows = rows.filter(function (r) {
-            const activeBooks = statsightAjax.activeBooks;
-            const visOdds = (r.all_odds || []).filter(o => o.odds !== null && (!activeBooks || activeBooks.includes(o.book)));
-            const odds = visOdds.length > 0 ? visOdds : (r.all_odds || []).filter(o => o.odds !== null);
             // Max: at least one book must be at or below the ceiling.
-            if (!odds.some(o => o.odds <= maxLowestOdds)) return false;
+            if (!r._odds.some(o => o.price <= maxLowestOdds)) return false;
             // Min: at least one book must be at or above the floor.
-            if (!odds.some(o => o.odds >= minLowestOdds)) return false;
+            if (!r._odds.some(o => o.price >= minLowestOdds)) return false;
             return true;
         });
 
-        // Compute display edge and determine whether the favorable side is on a selected book.
-        const activeBooks = statsightAjax.activeBooks;
+        // Edge/EV vs the no-vig consensus; needs at least two selected books on this side.
         rows = rows.map(function (r) {
-            const allOdds = (r.all_odds || []).filter(o => o.odds !== null);
-            const visOdds = allOdds.filter(o => !activeBooks || activeBooks.includes(o.book));
-            const oddsVals = allOdds.map(o => o.odds);
-            const dispEdge = oddsVals.length >= 2 ? Math.max(...oddsVals) - Math.min(...oddsVals) : 0;
-            // The favorable bet is the highest odds (most +). Check if it's on a selected book.
-            const bestOdds = oddsVals.length > 0 ? Math.max(...oddsVals) : null;
-            const bestIsVisible = bestOdds !== null && visOdds.some(o => o.odds === bestOdds);
-            return { ...r, _displayEdge: dispEdge, _bestIsVisible: bestIsVisible };
-        });
+            const value = calcValue(r._odds);
+            return value && { ...r, _displayEdge: value.edge, _ev: value.ev, _fair: value.fair, _bestOdds: value.bestOdds, _bestBook: value.bestBook, _stale: value.stale };
+        }).filter(Boolean);
 
-        // Hide rows where the user can't actually place the favorable bet (best odds not on a selected book).
-        if (activeBooks) {
-            rows = rows.filter(r => r._bestIsVisible);
-        }
-
-        // Re-apply min edge against the filtered edge.
+        // Drop likely stale/mismatched lines (counted so the results line can say so).
         rows = rows.filter(r => r._displayEdge >= minEdge);
+        staleHidden = rows.filter(r => r._stale).length;
+        rows = rows.filter(r => !r._stale);
 
         // Search
         if (searchQuery) {
@@ -373,12 +370,49 @@ var bvSports = <?php echo wp_json_encode( array_map( fn( $s ) => [ 'key' => $s['
         // Sort
         rows = [...rows].sort(function (a, b) {
             if (sortBy === 'edge')      return b._displayEdge - a._displayEdge;
-            if (sortBy === 'best_odds') return (b.best_odds ?? -Infinity) - (a.best_odds ?? -Infinity);
+            if (sortBy === 'ev')        return (b._ev ?? -Infinity) - (a._ev ?? -Infinity);
+            if (sortBy === 'best_odds') return b._bestOdds - a._bestOdds;
             if (sortBy === 'sport')     return (a.sport || '').localeCompare(b.sport || '');
             return 0;
         });
 
         return rows;
+    }
+
+    /**
+     * Value of the best price on one side against the no-vig consensus. JS mirror of
+     * statsight_calc_value() in functions.php — keep the two in sync.
+     * odds: [{ book, price (this side), other (opposite side, may be null) }].
+     * Returns { edge (pp), ev (%), fair (prob), bestOdds, bestBook, stale } or null with < 2 books.
+     */
+    const ONE_SIDED_MARGIN = 1.07;
+    const STALE_RATIO      = 0.5;  // best price implying < half the consensus prob = stale/mismatched line
+    function calcValue(odds) {
+        if (odds.length < 2) return null;
+        const impl   = o => o > 0 ? 100 / (o + 100) : Math.abs(o) / (Math.abs(o) + 100);
+        const median = xs => {
+            const s = [...xs].sort((a, b) => a - b), n = s.length;
+            return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2;
+        };
+        const margins = odds.filter(o => o.other != null).map(o => impl(o.price) + impl(o.other));
+        const oneSided = margins.length ? median(margins) : ONE_SIDED_MARGIN;
+        const best = odds.reduce((a, b) => (b.price > a.price ? b : a));
+        const fair = median(odds.filter(o => o !== best).map(o =>
+            impl(o.price) / (o.other != null ? impl(o.price) + impl(o.other) : oneSided)));
+        const decimal = best.price > 0 ? 1 + best.price / 100 : 1 + 100 / Math.abs(best.price);
+        return {
+            edge:     Math.round((fair - impl(best.price)) * 10000) / 100,
+            ev:       Math.round((fair * decimal - 1) * 10000) / 100,
+            fair:     fair,
+            bestOdds: best.price,
+            bestBook: best.book,
+            stale:    impl(best.price) < STALE_RATIO * fair,
+        };
+    }
+
+    /** Probability (0–1) to American odds, e.g. 0.45 => +122. */
+    function probToAmerican(p) {
+        return p >= 0.5 ? -Math.round(100 * p / (1 - p)) : Math.round(100 * (1 - p) / p);
     }
 
     const RENDER_LIMIT = 250;
@@ -387,9 +421,10 @@ var bvSports = <?php echo wp_json_encode( array_map( fn( $s ) => [ 'key' => $s['
         const rows    = getVisible();
         const visible = rows.slice(0, RENDER_LIMIT);
 
-        countEl.textContent = rows.length > RENDER_LIMIT
+        countEl.textContent = (rows.length > RENDER_LIMIT
             ? `Showing ${RENDER_LIMIT} of ${rows.length} props`
-            : `${rows.length} prop${rows.length !== 1 ? 's' : ''}`;
+            : `${rows.length} prop${rows.length !== 1 ? 's' : ''}`)
+            + (staleHidden ? ` · ${staleHidden} hidden as likely stale lines` : '');
         metaEl.hidden = false;
 
         if (rows.length === 0) {
@@ -402,66 +437,161 @@ var bvSports = <?php echo wp_json_encode( array_map( fn( $s ) => [ 'key' => $s['
             return;
         }
 
-        listEl.innerHTML = visible.map(function (r) {
-            // Filter to user's selected books; fall back to all if filter leaves none.
-            const activeBooks  = statsightAjax.activeBooks;
-            const filteredOdds = (r.all_odds || []).filter(o => o.odds !== null && (!activeBooks || activeBooks.includes(o.book)));
-            const visibleOdds  = filteredOdds.length > 0 ? filteredOdds : (r.all_odds || []).filter(o => o.odds !== null);
+        listEl.innerHTML = tableMedia.matches ? renderTable(visible) : visible.map(renderCard).join('');
+    }
 
-            // Recompute best book within visible set.
-            let bestKey = '', bestOddsVal = -Infinity;
-            visibleOdds.forEach(o => { if (o.odds > bestOddsVal) { bestOddsVal = o.odds; bestKey = o.book; } });
+    // Desktop shows a table with a column per sportsbook (like the props page); mobile keeps cards.
+    const tableMedia = window.matchMedia('(min-width: 901px)');
+    tableMedia.addEventListener('change', () => { if (allRows.length) renderList(); });
 
-            const allOdds = visibleOdds
-                .map(o => `<span class="bv-odds-chip${o.book === bestKey ? ' bv-odds-chip--best' : ''}">
-                    ${escHtml(fmtBook(o.book))} <strong>${escHtml(fmtOdds(o.odds))}</strong>
-                </span>`)
-                .join('');
+    /** Markup shared by the card and table layouts for one row. */
+    function rowParts(r) {
+        // Yes/No markets: over = Yes, under = No.
+        const sideLabel = r.line === 'Yes'
+            ? (r.side === 'over' ? '' : ' &mdash; No')
+            : ` &mdash; ${r.side === 'over' ? 'Over' : 'Under'} ${escHtml(r.line)}`;
 
-            const timeStr   = r.game_time ? formatTime(r.game_time) : '';
-            const sport     = sportTitle(r.sport);
-            const wlKey     = `${r.player}|${r.market_key}|${r.event_id}|${r.line}`;
-            const isWatched = watchlistMap[wlKey] != null;
-            const allBooksJson = JSON.stringify(
-                visibleOdds.map(o => ({ book: o.book, odds: o.odds }))
-            ).replace(/"/g, '&quot;');
-            const watchBtn = `<button
-                class="track-bet-btn${isWatched ? ' track-bet-btn--watching' : ''}"
-                aria-label="${isWatched ? 'Remove from watchlist' : 'Add to watchlist'}"
-                title="${isWatched ? 'Remove from watchlist' : 'Add to watchlist'}"
-                data-player="${escHtml(r.player)}"
-                data-market-key="${escHtml(r.market_key)}"
-                data-market-label="${escHtml(r.market)}"
-                data-event-id="${escHtml(r.event_id)}"
-                data-sport="${escHtml(r.sport)}"
-                data-line="${escHtml(r.line)}"
-                data-matchup="${escHtml(r.matchup)}"
-                data-game-time="${escHtml(r.game_time ?? '')}"
-                data-best-odds="${escHtml(String(bestOddsVal !== -Infinity ? bestOddsVal : ''))}"
-                data-best-book="${escHtml(bestKey)}"
-                data-all-books="${allBooksJson}"
-            >${isWatched ? heartFilled : heartEmpty}</button>`;
+        const timeStr   = r.game_time ? formatTime(r.game_time) : '';
+        const wlKey     = `${r.player}|${r.market_key}|${r.event_id}|${r.line}|${r.side}`;
+        const isWatched = watchlistMap[wlKey] != null;
+        const allBooksJson = JSON.stringify(
+            r._odds.map(o => ({ book: o.book, odds: o.price }))
+        ).replace(/"/g, '&quot;');
+        const watchBtn = `<button
+            class="track-bet-btn${isWatched ? ' track-bet-btn--watching' : ''}"
+            aria-label="${isWatched ? 'Remove from watchlist' : 'Add to watchlist'}"
+            title="${isWatched ? 'Remove from watchlist' : 'Add to watchlist'}"
+            data-player="${escHtml(r.player)}"
+            data-market-key="${escHtml(r.market_key)}"
+            data-market-label="${escHtml(r.market)}"
+            data-event-id="${escHtml(r.event_id)}"
+            data-sport="${escHtml(r.sport)}"
+            data-line="${escHtml(r.line)}"
+            data-side="${r.side}"
+            data-matchup="${escHtml(r.matchup)}"
+            data-game-time="${escHtml(r.game_time ?? '')}"
+            data-best-odds="${escHtml(String(r._bestOdds))}"
+            data-best-book="${escHtml(r._bestBook)}"
+            data-all-books="${allBooksJson}"
+        >${isWatched ? heartFilled : heartEmpty}</button>`;
+
+        return {
+            sport:   escHtml(sportTitle(r.sport)),
+            market:  escHtml(r.market) + sideLabel,
+            matchup: escHtml(r.matchup) + (timeStr ? ' &bull; ' + escHtml(timeStr) : ''),
+            edge:    `${r._displayEdge > 0 ? '+' : ''}${r._displayEdge.toFixed(1)}%`,
+            ev:      `${r._ev > 0 ? '+' : ''}${r._ev.toFixed(1)}%`,
+            fair:    escHtml(fmtOdds(probToAmerican(r._fair))),
+            watchBtn,
+        };
+    }
+
+    const EDGE_TITLE = "Fair (no-vig) probability minus the best price's implied probability";
+    const EV_TITLE   = 'Expected Value at the best price';
+    const FAIR_TITLE = 'No-vig consensus price across your books (excluding the best book)';
+
+    function renderCard(r) {
+        const p = rowParts(r);
+        const allOdds = r._odds
+            .map(o => `<span class="bv-odds-chip${o.price === r._bestOdds ? ' bv-odds-chip--best' : ''}">
+                ${escHtml(fmtBook(o.book))} <strong>${escHtml(fmtOdds(o.price))}</strong>
+            </span>`)
+            .join('');
+
+        return `
+            <div class="bv-row" data-edge="${r._displayEdge}">
+                <div class="bv-row__meta">
+                    <div class="bv-row__top">
+                        <span class="bv-row__player">${escHtml(r.player)}</span>
+                        <span class="bv-row__sport-tag">${p.sport}</span>
+                    </div>
+                    <span class="bv-row__market">${p.market}</span>
+                    <span class="bv-row__matchup">${p.matchup}</span>
+                </div>
+                <div class="bv-row__odds">${allOdds}</div>
+                <div class="bv-row__edge">
+                    <span class="bv-edge-badge" title="${EDGE_TITLE}">${p.edge}</span>
+                    <span class="bv-edge-label">edge</span>
+                    <span class="bv-ev-badge${r._ev > 0 ? ' bv-ev-badge--pos' : ''}" title="${EV_TITLE}">${p.ev} EV</span>
+                    <span class="bv-fair" title="${FAIR_TITLE}">Fair ${p.fair}</span>
+                </div>
+                <div class="bv-row__track">${p.watchBtn}</div>
+            </div>`;
+    }
+
+    /**
+     * Book columns: every book with a price in these rows (already limited to the user's selected
+     * books), in the site's book order, so there are no empty columns.
+     */
+    function tableBooks(rows) {
+        const rank = bk => { const i = statsightAjax.bookOrder.indexOf(bk); return i === -1 ? Infinity : i; };
+        return [...new Set(rows.flatMap(r => r._odds.map(o => o.book)))]
+            .sort((a, b) => rank(a) - rank(b) || fmtBook(a).localeCompare(fmtBook(b)));
+    }
+
+    function renderTable(rows) {
+        const books = tableBooks(rows);
+        const sortTh = (key, label, title) =>
+            `<th class="bv-col-num bv-th-sort${sortBy === key ? ' bv-th-sort--active' : ''}" data-sort="${key}" title="${title}">${label}${sortBy === key ? ' &#9662;' : ''}</th>`;
+
+        const body = rows.map(function (r) {
+            const p = rowParts(r);
+            const prices = Object.fromEntries(r._odds.map(o => [o.book, o.price]));
+            const bestBooks = r._odds.filter(o => o.price === r._bestOdds).map(o => escHtml(fmtBook(o.book))).join(', ');
+            const cells = books.map(function (bk) {
+                const v = prices[bk];
+                if (v == null) return '<td class="odds-cell odds-na">&mdash;</td>';
+                const best = v === r._bestOdds;
+                return `<td class="odds-cell${best ? ' odds-best' : ''}"><span class="${best ? 'odds-badge--best' : ''}">${escHtml(fmtOdds(v))}</span></td>`;
+            }).join('');
 
             return `
-                <div class="bv-row" data-edge="${r._displayEdge}">
-                    <div class="bv-row__meta">
+                <tr>
+                    <td class="bv-col-prop"><div class="bv-prop">
                         <div class="bv-row__top">
                             <span class="bv-row__player">${escHtml(r.player)}</span>
-                            <span class="bv-row__sport-tag">${escHtml(sport)}</span>
+                            <span class="bv-row__sport-tag">${p.sport}</span>
                         </div>
-                        <span class="bv-row__market">${escHtml(r.market)}${r.line !== 'Yes' ? ' &mdash; Over ' + escHtml(r.line) : ''}</span>
-                        <span class="bv-row__matchup">${escHtml(r.matchup)}${timeStr ? ' &bull; ' + escHtml(timeStr) : ''}</span>
-                    </div>
-                    <div class="bv-row__odds">${allOdds}</div>
-                    <div class="bv-row__edge">
-                        <span class="bv-edge-badge">+${r._displayEdge}</span>
-                        <span class="bv-edge-label">edge</span>
-                        ${r.ev != null ? `<span class="bv-ev-badge${r.ev > 0 ? ' bv-ev-badge--pos' : ''}" title="Expected Value">${r.ev > 0 ? '+' : ''}${r.ev}% EV</span>` : ''}
-                    </div>
-                    <div class="bv-row__track">${watchBtn}</div>
-                </div>`;
+                        <span class="bv-row__market">${p.market}</span>
+                        <span class="bv-row__matchup">${p.matchup}</span>
+                    </div></td>
+                    <td class="bv-col-num"><span class="bv-edge-badge bv-edge-badge--table">${p.edge}</span></td>
+                    <td class="bv-col-num"><span class="bv-ev-badge${r._ev > 0 ? ' bv-ev-badge--pos' : ''}">${p.ev}</span></td>
+                    <td class="bv-col-num bv-fair">${p.fair}</td>
+                    <td class="bv-col-best"><div class="odds-badge--best">${escHtml(fmtOdds(r._bestOdds))}</div><div class="bv-best-book">${bestBooks}</div></td>
+                    <td class="bv-col-track">${p.watchBtn}</td>
+                    ${cells}
+                </tr>`;
         }).join('');
+
+        return `
+            <div class="props-table-wrap bv-table-wrap">
+                <table class="props-table props-table--stepper bv-table">
+                    <thead>
+                        <tr>
+                            <th>Prop</th>
+                            ${sortTh('edge', 'Edge', EDGE_TITLE)}
+                            ${sortTh('ev', 'EV', EV_TITLE)}
+                            <th class="bv-col-num" title="${FAIR_TITLE}">Fair</th>
+                            <th>Best</th>
+                            <th aria-label="Watchlist"></th>
+                            ${books.map(bk => `<th class="bv-col-book">${escHtml(fmtBook(bk))}</th>`).join('')}
+                        </tr>
+                    </thead>
+                    <tbody>${body}</tbody>
+                </table>
+            </div>`;
     }
+
+    // Edge / EV column headers sort the table (kept in sync with the Sort by dropdown).
+    listEl.addEventListener('click', function (e) {
+        const th = e.target.closest('.bv-th-sort');
+        if (!th) return;
+        sortBy = th.dataset.sort;
+        sortSelect.value = sortBy;
+        updateFilterCount();
+        renderList();
+    });
 
     // ── Sport tabs ─────────────────────────────────────────────────────────
     document.querySelectorAll('.bv-sport-tab').forEach(function (btn) {
@@ -546,7 +676,8 @@ var bvSports = <?php echo wp_json_encode( array_map( fn( $s ) => [ 'key' => $s['
         const bestOdds   = btn.dataset.bestOdds;
         const bestBook   = btn.dataset.bestBook;
         const allBooks   = btn.dataset.allBooks;
-        const wlKey      = `${player}|${marketKey}|${eventId}|${line}`;
+        const side       = btn.dataset.side;
+        const wlKey      = `${player}|${marketKey}|${eventId}|${line}|${side}`;
         const isWatched  = watchlistMap[wlKey] != null;
 
         if (isWatched) {
@@ -580,7 +711,7 @@ var bvSports = <?php echo wp_json_encode( array_map( fn( $s ) => [ 'key' => $s['
                     market_key:   marketKey,
                     market_label: marketLabel,
                     line:         line,
-                    direction:    'over',
+                    direction:    side,
                     odds:         bestOdds,
                     book:         bestBook,
                     matchup:      matchup,

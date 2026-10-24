@@ -53,10 +53,7 @@ $notif_rules_raw = get_user_meta( $user->ID, 'statsight_notif_rules', true );
 $notif_rules     = ( $notif_rules_raw && is_string( $notif_rules_raw ) ) ? $notif_rules_raw : '[]';
 
 // Sportsbook preferences — null means all books.
-$active_books_raw = get_user_meta( $user->ID, 'statsight_active_books', true );
-$active_books     = ( $active_books_raw && is_string( $active_books_raw ) )
-    ? json_decode( $active_books_raw, true )
-    : null;
+$active_books = statsight_get_active_books( $user->ID );
 
 // Deduplicate by label so aliases (e.g. williamhill_us → Caesars) don't show twice, then sort A–Z.
 $all_books = [];
@@ -701,7 +698,7 @@ asort( $all_books );
             key:       'best_value',
             label:     'Best Value edge',
             desc:      'Prop edge exceeds threshold',
-            threshold: { label: 'Edge', unit: 'pts', min: 1, max: 2000, default: 100 },
+            threshold: { label: 'Edge', unit: '%', min: 0.5, max: 20, default: 3, step: 0.5 },
             sport:     true,
         },
         {
@@ -778,6 +775,8 @@ asort( $all_books );
         if (!type.threshold) return '';
         const t    = type.threshold;
         const step = t.step || 1;
+        // Values outside the range (e.g. old points-based edge thresholds) fall back to the default.
+        if (value == null || value > t.max) value = t.default;
         return `
             <div class="notif-rule__field">
                 <label class="notif-rule__field-label">${t.label}</label>
@@ -787,7 +786,7 @@ asort( $all_books );
                         <input
                             type="number"
                             class="notif-rule__input notif-threshold"
-                            value="${value ?? t.default}"
+                            value="${value}"
                             min="${t.min}"
                             max="${t.max}"
                             step="${step}"
