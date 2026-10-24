@@ -155,10 +155,13 @@ function statsight_ask_tools(): array {
             'player' => [ 'type' => 'string', 'description' => 'Player name' ],
             'sport'  => $odds,
         ], [ 'player', 'sport' ] ),
-        $tool( 'live_game', "A game in progress (or just finished) for a player: score, period and clock, how much of "
-            . "the game is played, the player's stat line so far, his average minutes and stats over his last 10 games, "
-            . 'and any live prop lines. Use for "how many points will he get", "how is he doing tonight", live bets.', [
-            'player' => [ 'type' => 'string', 'description' => 'Player name' ],
+        $tool( 'live_game', "A game in progress (or just finished). Pass a player for his line: score, period and clock, "
+            . "how much of the game is played, his stat line so far, his last-10 minutes and stats, and live prop lines "
+            . '("how many points will he get", "how is he doing tonight"). Pass a team for the whole game: score, status, '
+            . 'team stats, the betting line, and each side\'s top performers ("who will win", "how is the game going"). '
+            . 'If nothing matches it lists the games live right now; rosters change, so check names against those box '
+            . 'scores rather than assuming who plays for whom.', [
+            'player' => [ 'type' => 'string', 'description' => 'Player name or team name' ],
             'sport'  => $odds,
         ], [ 'player', 'sport' ] ),
         $tool( 'best_edges', "The props where one sportsbook's price beats the other books' no-vig consensus by the most "
@@ -611,12 +614,57 @@ function statsight_ask_espn_game( string $sport_key, array $event ): ?array {
             }
         }
     }
+    $team_stats = [];
+    foreach ( $sum['boxscore']['teams'] ?? [] as $t ) {
+        foreach ( $t['statistics'] ?? [] as $stat ) {
+            $team_stats[ $t['team']['displayName'] ?? '?' ][ $stat['label'] ?? $stat['name'] ?? '?' ] = $stat['displayValue'] ?? null;
+        }
+    }
+    // ESPN's betting line for the game (it may still be the pre-game number).
+    $pc   = $sum['pickcenter'][0] ?? null;
+    $line = $pc ? array_filter( [
+        'source'         => ( $pc['provider']['name'] ?? 'Sportsbook' ) . ' via ESPN (may be the pre-game line)',
+        'summary'        => $pc['details'] ?? null,
+        'home_moneyline' => $pc['homeTeamOdds']['moneyLine'] ?? null,
+        'away_moneyline' => $pc['awayTeamOdds']['moneyLine'] ?? null,
+        'spread'         => $pc['spread'] ?? null,
+        'total'          => $pc['overUnder'] ?? null,
+    ], fn( $v ) => $v !== null ) : null;
+
     return [
-        'state'   => $comp['status']['type']['state'] ?? '',
-        'detail'  => $comp['status']['type']['shortDetail'] ?? '',
-        'teams'   => $teams,
-        'players' => $players,
+        'state'      => $comp['status']['type']['state'] ?? '',
+        'detail'     => $comp['status']['type']['shortDetail'] ?? '',
+        'teams'      => $teams,
+        'players'    => $players,
+        'team_stats' => $team_stats,
+        'line'       => $line,
     ];
+}
+
+/**
+ * The whole game for a team question: score, status, team stats, the betting line, and each team's top performers
+ * (the box score lists players in ESPN's order, which leads with the starters / most-used players).
+ */
+function statsight_ask_live_team_view( array $event, array $g ): array {
+    $by_team = [];
+    foreach ( $g['players'] as $name => $line ) {
+        if ( count( $by_team[ $line['team'] ] ?? [] ) < 8 ) {
+            $by_team[ $line['team'] ][ $name ] = $line['stats'] ?? [];
+        }
+    }
+    $score = [];
+    foreach ( $g['teams'] as $team => $t ) {
+        $score[] = $team . ' ' . $t['score'] . ( $t['home'] ? ' (home)' : '' );
+    }
+    return array_filter( [
+        'game'        => $event['away_team'] . ' @ ' . $event['home_team'],
+        'status'      => $g['state'] === 'post' ? 'Final' : $g['detail'],
+        'score'       => implode( ', ', $score ),
+        'team_stats'  => $g['team_stats'] ?: null,
+        'betting_line' => $g['line'],
+        'players'     => $by_team,
+        'note'        => 'No win-probability model for this sport: weigh the score, time left, team stats and the line.',
+    ] );
 }
 
 /**
@@ -673,6 +721,15 @@ function statsight_ask_live_projection( array $line, array $clock, string $scrip
 function statsight_ask_live_game( string $player, string $sport ): array {
     $sport_key = STATSIGHT_ASK_ODDS_SPORTS[ $sport ];
     $want      = statsight_normalise_team_name( $player );
+    $live_now  = [];
+    $team_hit  = null;   // a player match anywhere wins over a team match
+
+    // A team name: the full name, or its nickname ("Flyers") anywhere in what was asked.
+    $is_team = function ( string $team ) use ( $want ): bool {
+        $t    = statsight_normalise_team_name( $team );
+        $nick = substr( $t, (int) strrpos( $t, ' ' ) );
+        return $t !== '' && ( str_contains( $t, $want ) || str_contains( $want, $t ) || ( strlen( trim( $nick ) ) >= 4 && str_contains( $want, trim( $nick ) ) ) );
+    };
 
     foreach ( statsight_get_events_for_sport( $sport_key )['days'] ?? [] as $day ) {
         foreach ( $day['events'] ?? [] as $event ) {
@@ -682,6 +739,13 @@ function statsight_ask_live_game( string $player, string $sport ): array {
             $g = statsight_ask_espn_game( $sport_key, $event );
             if ( ! $g || $g['state'] === 'pre' ) {
                 continue;
+            }
+            $live_now[] = $event['away_team'] . ' @ ' . $event['home_team'] . ' — '
+                . ( $g['state'] === 'post' ? 'Final' : $g['detail'] ) . ', '
+                . implode( ', ', array_map( fn( $t, $v ) => "$t {$v['score']}", array_keys( $g['teams'] ), $g['teams'] ) );
+
+            if ( ! $team_hit && ( $is_team( $event['home_team'] ?? '' ) || $is_team( $event['away_team'] ?? '' ) ) ) {
+                $team_hit = [ $event, $g ];
             }
             foreach ( $g['players'] as $name => $line ) {
                 if ( ! str_contains( statsight_normalise_team_name( $name ), $want ) ) {
@@ -737,8 +801,13 @@ function statsight_ask_live_game( string $player, string $sport ): array {
             }
         }
     }
+    if ( $team_hit ) {
+        return statsight_ask_live_team_view( ...$team_hit );
+    }
     return [ 'note' => "No game in progress (or just finished) with '$player' in the " . strtoupper( $sport ) . ' box scores. '
-                       . "The game may not have started, may be over for a while, or he hasn't played yet." ];
+                       . "The game may not have started, may be over for a while, he hasn't played yet, or he's not on "
+                       . 'either roster. Try a team name, or a player from these games.',
+             'games_live_or_just_finished' => $live_now ];
 }
 
 // ---------------------------------------------------------------- the agent loop
