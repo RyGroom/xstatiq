@@ -629,7 +629,8 @@ $is_loggedin = is_user_logged_in();
                     if (colonIdx === -1) {
                         // Main row — use the saved best book.
                         const p = propMap[key];
-                        if (p) legs.push({ player: p.player, market_label: p.market_label, line: p.line, direction: p.direction, odds: p.odds, book: p.book, matchup: p.matchup });
+                        if (p) legs.push({ player: p.player, market_label: p.market_label, line: p.line, direction: p.direction, odds: p.odds, book: p.book, matchup: p.matchup,
+                            wl_id: p.id, event_id: p.event_id, sport: p.sport, market_key: p.market_key, game_start_time: p.game_start_time });
                     } else {
                         // Sub-row — propId:bookName.
                         const propId  = key.slice(0, colonIdx);
@@ -638,7 +639,8 @@ $is_loggedin = is_user_logged_in();
                         if (p) {
                             const allBooks = (() => { try { return JSON.parse(p.all_books || '[]'); } catch { return []; } })();
                             const entry = allBooks.find(b => b.book === bookName);
-                            if (entry) legs.push({ player: p.player, market_label: p.market_label, line: p.line, direction: p.direction, odds: entry.odds, book: entry.book, matchup: p.matchup });
+                            if (entry) legs.push({ player: p.player, market_label: p.market_label, line: p.line, direction: p.direction, odds: entry.odds, book: entry.book, matchup: p.matchup,
+                                wl_id: p.id, event_id: p.event_id, sport: p.sport, market_key: p.market_key, game_start_time: p.game_start_time });
                         }
                     }
                 }

@@ -90,7 +90,7 @@ var statsightAsk = {
     const SOURCE = {
         find_player: 'Player lookup', player_recent_games: 'Game logs', player_lines_today: 'Model projections',
         slate: 'Slate', team_form: 'Team form', injuries: 'Injuries', model_track_record: 'Track record',
-        odds_board: 'Live odds', best_edges: 'Best edges',
+        odds_board: 'Live odds', best_edges: 'Best edges', live_game: 'Live box score',
     };
 
     function esc(s) {

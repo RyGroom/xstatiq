@@ -43,6 +43,7 @@ What the data covers:
 - Game logs, team form, injuries, the model's projections and its track record: NBA, NFL and MLB.
 - Live player-prop odds across sportsbooks, with edge and EV against the no-vig consensus: NBA, NFL, MLB, NHL,
   college football and basketball, WNBA, EPL and MLS.
+- Live scores and in-game box scores for games in progress (same sports).
 
 Scope and conduct:
 - Only answer sports questions. If the question isn't about sports, or asks for anything inappropriate, harmful,
@@ -57,6 +58,15 @@ Scope and conduct:
   strongest sport, NFL moderate, MLB less tested.
 - Edge and EV from the odds tools compare the best price with the other books' no-vig consensus. They measure price
   disagreement between books, not the model's opinion; say which one you are quoting.
+- Live games: whenever a question is about a game in progress or tonight's game once it may have tipped ("right
+  now", "so far", "currently", "will he finish with", "is he on pace"), call live_game before answering; never say
+  you can't do live games. For basketball it returns the score and margin, the clock, the game script (blowout,
+  comfortable lead, close late, competitive), foul trouble, and a projection whose expected minutes already account
+  for those (starters sit in blowouts, bench players gain; close games run starters longer). Lead with the
+  projected final and likely range, say in a few words what drove the minutes (e.g. "up 24 with 9 minutes left, so
+  he likely sits"), compare with any live line, and call it a live pace estimate, not a model pick. For other
+  sports, reason from the score, margin and clock the same way (garbage time, a team protecting a lead, a starter
+  pulled).
 - Dates and times are US Eastern (the user message gives the current Eastern date and time). A game whose start
   time has passed is underway or over and its pregame props are off the board: say the game has already started
   rather than that lines haven't been posted, and treat "tonight" as the current Eastern evening.
@@ -142,6 +152,12 @@ function statsight_ask_tools(): array {
         $tool( 'odds_board', "A player's live prop odds at every sportsbook on today's slate (main line per market), with "
             . "the best price on each side, its edge and EV against the other books' no-vig consensus, and the fair price. "
             . 'Use for line shopping or "where should I bet X".', [
+            'player' => [ 'type' => 'string', 'description' => 'Player name' ],
+            'sport'  => $odds,
+        ], [ 'player', 'sport' ] ),
+        $tool( 'live_game', "A game in progress (or just finished) for a player: score, period and clock, how much of "
+            . "the game is played, the player's stat line so far, his average minutes and stats over his last 10 games, "
+            . 'and any live prop lines. Use for "how many points will he get", "how is he doing tonight", live bets.', [
             'player' => [ 'type' => 'string', 'description' => 'Player name' ],
             'sport'  => $odds,
         ], [ 'player', 'sport' ] ),
@@ -494,6 +510,237 @@ function statsight_ask_best_edges( string $sport, ?int $top = 8 ): array {
     return [ 'edges' => array_slice( $edges, 0, $top ), 'note' => 'Edge and EV measure price disagreement between books, not the model.' ];
 }
 
+/** Basketball clocks for minute-based live projections. */
+const STATSIGHT_ASK_CLOCKS = [
+    'nba'   => [ 'periods' => 4, 'len' => 12, 'ot' => 5 ],
+    'wnba'  => [ 'periods' => 4, 'len' => 10, 'ot' => 5 ],
+    'ncaab' => [ 'periods' => 2, 'len' => 20, 'ot' => 5 ],
+];
+
+/**
+ * Game clock progress from ESPN's short detail ("5:42 - 3rd Quarter", "12:30 - 2nd Half", "Halftime",
+ * "End of 3rd Quarter", "2:10 - OT"), or null if it can't be read.
+ */
+function statsight_ask_clock( string $detail, array $clock ): ?array {
+    $game = $clock['periods'] * $clock['len'];
+    if ( stripos( $detail, 'halftime' ) !== false ) {
+        return [ 'minutes_played' => $game / 2, 'minutes_left' => $game / 2, 'game_minutes' => $game ];
+    }
+    $overtime = (bool) preg_match( '/\d?OT\b/i', $detail );
+    if ( ! $overtime && ! preg_match( '/(\d)(?:st|nd|rd|th) (?:Quarter|Half)/i', $detail, $q ) ) {
+        return null;
+    }
+    $period = $overtime ? $clock['ot'] : $clock['len'];
+    $left   = 0.0;                                                  // "End of ..." has no clock
+    if ( preg_match( '/^(\d+):(\d+(?:\.\d+)?)/', $detail, $c ) ) {
+        $left = (int) $c[1] + (float) $c[2] / 60;
+    } elseif ( preg_match( '/^(\d+(?:\.\d+)?) -/', $detail, $c ) ) {
+        $left = (float) $c[1] / 60;                                 // under a minute: seconds only, e.g. "31.9 - 4th Quarter"
+    } elseif ( stripos( $detail, 'start' ) !== false ) {
+        $left = $period;
+    }
+    if ( $overtime ) {
+        return [ 'minutes_played' => round( $game + $period - $left, 1 ), 'minutes_left' => round( $left, 1 ),
+                 'game_minutes' => $game, 'overtime' => true ];
+    }
+    $played = ( (int) $q[1] - 1 ) * $clock['len'] + ( $clock['len'] - $left );
+    return [ 'minutes_played' => round( $played, 1 ), 'minutes_left' => round( $game - $played, 1 ), 'game_minutes' => $game ];
+}
+
+/**
+ * Live state of one game from ESPN: status, both teams' scores, and every player's box score line with his team
+ * and starter flag. Scoreboard cached 30 s, box score 45 s. Null if ESPN doesn't list the game.
+ *
+ * @return array{state: string, detail: string, teams: array<string, array{score: int, home: bool}>, players: array<string, array>}|null
+ */
+function statsight_ask_espn_game( string $sport_key, array $event ): ?array {
+    $path = statsight_espn_sport_path( $sport_key );
+    if ( ! $path ) {
+        return null;
+    }
+    $base = 'https://site.api.espn.com/apis/site/v2/sports/' . $path['sport'] . '/' . $path['league'];
+    $get  = function ( string $url, string $key, int $ttl ) {
+        $data = get_transient( $key );
+        if ( false === $data ) {
+            $r    = wp_remote_get( $url, [ 'timeout' => 10 ] );
+            $data = ! is_wp_error( $r ) && wp_remote_retrieve_response_code( $r ) === 200 ? json_decode( wp_remote_retrieve_body( $r ), true ) : [];
+            set_transient( $key, $data, $ttl );
+        }
+        return $data ?: [];
+    };
+
+    $et    = new DateTimeZone( 'America/New_York' );
+    $date  = ( new DateTime( $event['commence_time'] ) )->setTimezone( $et )->format( 'Y-m-d' );
+    $match = fn( string $a, string $b ) => ( $x = statsight_normalise_team_name( $a ) ) === ( $y = statsight_normalise_team_name( $b ) )
+                                           || str_contains( $x, $y ) || str_contains( $y, $x );
+    $id    = null;
+    foreach ( $get( "$base/scoreboard", 'statsight_ask_sb_' . $sport_key, 30 )['events'] ?? [] as $e ) {
+        $names = array_column( array_column( $e['competitions'][0]['competitors'] ?? [], 'team' ), 'displayName' );
+        if ( count( $names ) === 2
+            && ( ( $match( $event['home_team'], $names[0] ) && $match( $event['away_team'], $names[1] ) )
+              || ( $match( $event['home_team'], $names[1] ) && $match( $event['away_team'], $names[0] ) ) )
+            && ( new DateTime( $e['date'] ) )->setTimezone( $et )->format( 'Y-m-d' ) === $date ) {   // not yesterday's rematch
+            $id = $e['id'];
+            break;
+        }
+    }
+    if ( ! $id ) {
+        return null;
+    }
+
+    $sum   = $get( "$base/summary?event=$id", 'statsight_ask_sum_' . $id, 45 );
+    $comp  = $sum['header']['competitions'][0] ?? [];
+    $teams = [];
+    foreach ( $comp['competitors'] ?? [] as $c ) {
+        $teams[ $c['team']['displayName'] ?? '?' ] = [ 'score' => (int) ( $c['score'] ?? 0 ), 'home' => ( $c['homeAway'] ?? '' ) === 'home' ];
+    }
+    $players = [];
+    foreach ( $sum['boxscore']['players'] ?? [] as $block ) {
+        $team = $block['team']['displayName'] ?? '?';
+        foreach ( $block['statistics'] ?? [] as $group ) {
+            foreach ( $group['athletes'] ?? [] as $a ) {
+                $name = $a['athlete']['displayName'] ?? '';
+                if ( ! $name || ( $a['didNotPlay'] ?? false ) || empty( $a['stats'] ) ) {
+                    continue;
+                }
+                $players[ $name ]['team']    = $team;
+                $players[ $name ]['starter'] = (bool) ( $a['starter'] ?? false );
+                foreach ( $group['labels'] ?? [] as $i => $label ) {
+                    $players[ $name ]['stats'][ $label ] = $a['stats'][ $i ] ?? null;
+                }
+            }
+        }
+    }
+    return [
+        'state'   => $comp['status']['type']['state'] ?? '',
+        'detail'  => $comp['status']['type']['shortDetail'] ?? '',
+        'teams'   => $teams,
+        'players' => $players,
+    ];
+}
+
+/**
+ * Where a basketball player is headed: expected remaining minutes from his usual minutes, scaled for game script
+ * (starters sit in blowouts, bench players gain; close games run starters longer) and foul trouble; his rate per
+ * minute blends tonight's with his last-10 rate, trusting tonight more as the game goes on.
+ */
+function statsight_ask_live_projection( array $line, array $clock, string $script, bool $foul_trouble, ?array $last10 ): array {
+    $num     = fn( $v ) => is_numeric( $v ) ? (float) $v : ( preg_match( '/^(\d+)-\d+$/', (string) $v, $m ) ? (float) $m[1] : null );
+    $stats   = $line['stats'] ?? [];
+    $played  = $num( $stats['MIN'] ?? null ) ?? 0.0;
+    $left    = $clock['minutes_left'];
+    $usual   = $last10['minutes'] ?? null;
+
+    $expected = $usual
+        ? $usual * $left / $clock['game_minutes']
+        : ( $clock['minutes_played'] > 0 ? $played / $clock['minutes_played'] * $left : 0.0 );
+    $why      = [ $usual ? "his usual {$usual} min share of the {$left} min left" : "his share of minutes so far tonight (no recent-minutes history)" ];
+    $factors  = [
+        'blowout'          => $line['starter'] ? [ 0.45, 'blowout: starters usually sit most of the rest' ] : [ 1.4, 'blowout: bench players get extra run' ],
+        'comfortable lead' => $line['starter'] ? [ 0.85, 'comfortable lead: starters may rest late' ] : [ 1.1, 'comfortable lead: a bit more bench time' ],
+        'close late'       => $line['starter'] ? [ 1.15, 'close late: starters play the closing stretch' ] : [ 0.8, 'close late: rotation shortens' ],
+    ];
+    if ( isset( $factors[ $script ] ) ) {
+        $expected *= $factors[ $script ][0];
+        $why[]     = $factors[ $script ][1];
+    }
+    if ( $foul_trouble ) {
+        $expected *= 0.8;
+        $why[]     = 'foul trouble';
+    }
+    $expected = round( min( $left, max( 0.0, $expected ) ), 1 );
+
+    $cols = [ 'pts' => 'PTS', 'reb' => 'REB', 'ast' => 'AST', 'fg3m' => '3PT' ];
+    $out  = [];
+    foreach ( $cols as $key => $label ) {
+        $now = $num( $stats[ $label ] ?? null );
+        if ( $now === null ) {
+            continue;
+        }
+        $game_rate = $played >= 3 ? $now / $played : null;
+        $base_rate = ( $usual && isset( $last10[ $key ] ) ) ? $last10[ $key ] / $usual : null;
+        $w         = $base_rate === null ? 1.0 : ( $game_rate === null ? 0.0 : $played / ( $played + 20 ) );
+        $rate      = $w * ( $game_rate ?? 0 ) + ( 1 - $w ) * ( $base_rate ?? 0 );
+        $more      = $rate * $expected;
+        $spread    = sqrt( max( $more, 0.0 ) );                     // rough Poisson spread on the remaining output
+        $out[ $key ] = [ 'now' => $now, 'projected_final' => round( $now + $more, 1 ),
+                         'likely_range' => [ round( max( $now, $now + $more - $spread ), 0 ), round( $now + $more + $spread, 0 ) ] ];
+    }
+    return [ 'expected_minutes_left' => $expected, 'minutes_reasoning' => implode( '; ', $why ), 'stats' => $out,
+             'method' => "tonight's per-minute rate blended with his last-10 rate (tonight's weight grows with minutes played), times expected minutes left" ];
+}
+
+function statsight_ask_live_game( string $player, string $sport ): array {
+    $sport_key = STATSIGHT_ASK_ODDS_SPORTS[ $sport ];
+    $want      = statsight_normalise_team_name( $player );
+
+    foreach ( statsight_get_events_for_sport( $sport_key )['days'] ?? [] as $day ) {
+        foreach ( $day['events'] ?? [] as $event ) {
+            if ( strtotime( $event['commence_time'] ?? '' ) > time() ) {
+                continue;   // not started yet
+            }
+            $g = statsight_ask_espn_game( $sport_key, $event );
+            if ( ! $g || $g['state'] === 'pre' ) {
+                continue;
+            }
+            foreach ( $g['players'] as $name => $line ) {
+                if ( ! str_contains( statsight_normalise_team_name( $name ), $want ) ) {
+                    continue;
+                }
+                $team   = $line['team'];
+                $opp    = array_key_first( array_diff_key( $g['teams'], [ $team => 1 ] ) );
+                $margin = ( $g['teams'][ $team ]['score'] ?? 0 ) - ( $g['teams'][ $opp ]['score'] ?? 0 );
+                $out    = [
+                    'game'         => $event['away_team'] . ' @ ' . $event['home_team'],
+                    'status'       => $g['state'] === 'post' ? 'Final' : $g['detail'],
+                    'score'        => "$team " . ( $g['teams'][ $team ]['score'] ?? '?' ) . ", $opp " . ( $g['teams'][ $opp ]['score'] ?? '?' ),
+                    'player'       => $name,
+                    'player_team'  => $team,
+                    'team_margin'  => $margin,                     // + leading, - trailing
+                    'starter'      => $line['starter'],
+                    'stats_so_far' => $line['stats'] ?? [],
+                ];
+
+                $last10 = null;
+                if ( in_array( $sport, STATSIGHT_ASK_ENGINE, true ) && ( $found = statsight_ask_find_player( $name, $sport )['players'][0] ?? null ) ) {
+                    $last10 = statsight_ask_player_recent_games( $found['player_id'], $sport, 10 )['averages'] ?? null;
+                    $out['last_10_averages'] = $last10;
+                }
+
+                $clock = ( $g['state'] === 'in' && isset( STATSIGHT_ASK_CLOCKS[ $sport ] ) ) ? statsight_ask_clock( $g['detail'], STATSIGHT_ASK_CLOCKS[ $sport ] ) : null;
+                if ( $clock ) {
+                    $frac = $clock['minutes_left'] / $clock['game_minutes'];
+                    $m    = abs( $margin );
+                    $script = match ( true ) {
+                        ( $m >= 30 && $frac <= 0.5 ) || ( $m >= 25 && $frac <= 0.35 ) || ( $m >= 20 && $frac <= 0.2 ) || ( $m >= 16 && $frac <= 0.08 ) => 'blowout',
+                        $m >= 12 && $frac <= 0.25 => 'comfortable lead',
+                        $m <= 6 && $frac <= 0.3   => 'close late',
+                        default                   => 'competitive',
+                    };
+                    $fouls = (int) ( $line['stats']['PF'] ?? 0 );
+                    $trouble = $fouls >= 5 || ( $fouls >= 4 && $frac > 0.2 ) || ( $fouls >= 3 && $frac > 0.5 );
+                    $out['game_clock']   = $clock;
+                    $out['game_script']  = $script . ( $script === 'competitive' ? '' : ( $margin > 0 ? " ({$team} ahead)" : " ({$team} behind)" ) );
+                    $out['foul_trouble'] = $trouble ? "$fouls fouls" : false;
+                    $out['projection']   = statsight_ask_live_projection( $line, $clock, $script, $trouble, $last10 );
+                }
+
+                $props = array_values( array_filter( statsight_ask_prop_rows( $sport_key ),
+                    fn( $r ) => statsight_normalise_team_name( $r['player'] ) === statsight_normalise_team_name( $name ) ) );
+                if ( $props ) {
+                    $out['live_lines'] = array_map( fn( $r ) => [
+                        'market' => $r['market'], 'line' => $r['line'],
+                        'over' => statsight_ask_side_value( $r, 'over' ), 'under' => statsight_ask_side_value( $r, 'under' ),
+                    ], array_slice( $props, 0, 8 ) );
+                }
+                return $out;
+            }
+        }
+    }
+    return [ 'note' => "No game in progress (or just finished) with '$player' in the " . strtoupper( $sport ) . ' box scores. '
+                       . "The game may not have started, may be over for a while, or he hasn't played yet." ];
+}
+
 // ---------------------------------------------------------------- the agent loop
 
 /** Run one tool call. Returns [json string (max 12k chars), is_error]. */
@@ -508,11 +755,12 @@ function statsight_ask_run_tool( string $name, array $args ): array {
         'model_track_record'  => 'statsight_ask_model_track_record',
         'odds_board'          => 'statsight_ask_odds_board',
         'best_edges'          => 'statsight_ask_best_edges',
+        'live_game'           => 'statsight_ask_live_game',
     ];
     if ( ! isset( $funcs[ $name ] ) ) {
         return [ wp_json_encode( [ 'error' => "unknown tool $name" ] ), true ];
     }
-    $sports = in_array( $name, [ 'odds_board', 'best_edges' ], true ) ? array_keys( STATSIGHT_ASK_ODDS_SPORTS ) : STATSIGHT_ASK_ENGINE;
+    $sports = in_array( $name, [ 'odds_board', 'best_edges', 'live_game' ], true ) ? array_keys( STATSIGHT_ASK_ODDS_SPORTS ) : STATSIGHT_ASK_ENGINE;
     if ( isset( $args['sport'] ) && ! in_array( $args['sport'], $sports, true ) ) {
         return [ wp_json_encode( [ 'error' => 'Sport must be one of: ' . implode( ', ', $sports ) . '.' ] ), true ];
     }

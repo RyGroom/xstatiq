@@ -71,6 +71,8 @@ if ( $profile_user_id ) :
 (function () {
     'use strict';
 
+    const BOOK_LABELS = <?php echo wp_json_encode( statsight_get_book_labels() ); ?>;
+
     function escHtml(s) {
         return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
@@ -144,6 +146,44 @@ if ( $profile_user_id ) :
 
     function fmtDir(dir) {
         return dir === 'under' ? 'Under' : 'Over';
+    }
+
+    // ── Collection legs: game time and results (from the watchlist rows they were built from) ──
+    /** "2026-10-24 23:30:00" (UTC) -> "Sat, Oct 24, 7:30 PM" in the viewer's time zone. */
+    function fmtGameTime(utc) {
+        const d = new Date(String(utc).replace(' ', 'T') + 'Z');
+        return isNaN(d) ? '' : d.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    }
+
+    const SCORER_MARKETS = ['player_anytime_td', 'player_1st_td', 'player_last_td', 'player_goal_scorer_anytime',
+        'player_goal_scorer_first', 'player_goal_scorer_last', 'player_first_goal_scorer', 'player_last_goal_scorer'];
+
+    /** Hit / Miss / Push badge with the actual stat once graded; Live once the game has started; nothing before. */
+    function legResultBadge(l) {
+        if (l.result) {
+            const isScorer = SCORER_MARKETS.includes((l.market_key || '').replace(/_alternate$/, ''));
+            const actual   = l.actual_stat == null ? '' : (isScorer ? (Number(l.actual_stat) === 1 ? 'Scored' : 'No score') : String(Number(l.actual_stat)));
+            const label    = { win: 'Hit', loss: 'Miss', push: 'Push' }[l.result] || l.result;
+            return `<span class="wl-result-badge wl-result-badge--${escHtml(l.result)}" title="${actual ? 'Actual: ' + escHtml(actual) : ''}">${escHtml(label)}${actual ? ' &middot; ' + escHtml(actual) : ''}</span>`;
+        }
+        const start = l.game_start_time ? new Date(String(l.game_start_time).replace(' ', 'T') + 'Z') : null;
+        return start && start < new Date() ? '<span class="wl-result-badge wl-result-badge--progress">Live</span>' : '';
+    }
+
+    /** Whole collection: a neutral "x/y hit" count once any leg is graded. A collection isn't a parlay, so no
+        overall hit/miss verdict; the legs carry their own results. */
+    function collectionStatus(legs) {
+        if (!legs.some(l => l.result)) return null;
+        return { label: `${legs.filter(l => l.result === 'win').length}/${legs.length} hit`, mod: 'push' };
+    }
+
+    /** The collection's game date, e.g. "Oct 24", or a range when its games span days. */
+    function collectionDate(legs) {
+        const days = [...new Set(legs.filter(l => l.game_start_time).map(l => {
+            const d = new Date(String(l.game_start_time).replace(' ', 'T') + 'Z');
+            return isNaN(d) ? null : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        }).filter(Boolean))];
+        return days.length > 1 ? `${days[0]} – ${days[days.length - 1]}` : (days[0] || '');
     }
 
     // Returns a tier label + CSS modifier based on hit rate, volume, and ROI.
@@ -244,17 +284,26 @@ if ( $profile_user_id ) :
 
                         section.className = 'profile-collections';
                         section.innerHTML = collections.map(function (c) {
-                            const legs = (c.legs || []).map(l =>
+                            const all  = c.legs || [];
+                            const legs = all.map(l =>
                                 `<li class="profile-collection__leg">
-                                    <span class="profile-collection__leg-player">${escHtml(l.player)}</span>
-                                    <span class="profile-collection__leg-line">${fmtDir(l.direction)} ${escHtml(l.line)} ${escHtml(l.market_label)}</span>
-                                    <span class="profile-collection__leg-odds">${fmtOdds(l.odds)}</span>
+                                    <div class="profile-collection__leg-main">
+                                        <span class="profile-collection__leg-player">${escHtml(l.player)}</span>
+                                        <span class="profile-collection__leg-line">${fmtDir(l.direction)} ${escHtml(l.line)} ${escHtml(l.market_label)}</span>
+                                        <span class="profile-collection__leg-odds">${fmtOdds(l.odds)}</span>
+                                        ${legResultBadge(l)}
+                                    </div>
+                                    <div class="profile-collection__leg-game">${escHtml(l.matchup || '')}${l.game_start_time ? ` &middot; ${escHtml(fmtGameTime(l.game_start_time))}` : ''}</div>
                                 </li>`
                             ).join('');
+                            const status = collectionStatus(all);
+                            const date   = collectionDate(all);
                             return `<div class="profile-collection" data-collection-id="${escHtml(c.id)}">
                                 <div class="profile-collection__header" role="button" tabindex="0" aria-expanded="false">
                                     <span class="profile-collection__name">${escHtml(c.name)}</span>
-                                    <span class="profile-collection__count">${(c.legs || []).length} prop${(c.legs || []).length !== 1 ? 's' : ''}</span>
+                                    ${date ? `<span class="profile-collection__date">${escHtml(date)}</span>` : ''}
+                                    ${status ? `<span class="wl-result-badge wl-result-badge--${status.mod}">${escHtml(status.label)}</span>` : ''}
+                                    <span class="profile-collection__count">${all.length} prop${all.length !== 1 ? 's' : ''}</span>
                                     <button class="profile-collection__share" title="Copy link" data-collection-id="${escHtml(c.id)}" aria-label="Copy shareable link">${shareIcon}</button>
                                     <span class="profile-collection__chevron" aria-hidden="true"></span>
                                 </div>
@@ -326,7 +375,8 @@ if ( $profile_user_id ) :
                             <span class="feed-item__market">${escHtml(row.market_label)}</span>
                             <span class="feed-item__line">${fmtDir(row.direction)} ${escHtml(row.line)}</span>
                             <span class="feed-item__odds">${fmtOdds(row.odds)}</span>
-                            <span class="feed-item__book">${escHtml(row.book)}</span>
+                            <span class="feed-item__book">${escHtml(BOOK_LABELS[row.book] || row.book)}</span>
+                            ${legResultBadge(row)}
                             ${!isOwnProfile ? saveBtnHtml(row) : ''}
                         </div>
                         <div class="feed-item__matchup" style="padding-left:0">${escHtml(row.matchup)} &middot; ${timeAgo(row.added_at)}</div>`;
@@ -547,6 +597,8 @@ else :
 (function () {
     'use strict';
 
+    const BOOK_LABELS = <?php echo wp_json_encode( statsight_get_book_labels() ); ?>;
+
     function escHtml(s) {
         return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
@@ -641,6 +693,21 @@ else :
 
     function fmtDir(dir) {
         return dir === 'under' ? 'Under' : 'Over';
+    }
+
+    const SCORER_MARKETS = ['player_anytime_td', 'player_1st_td', 'player_last_td', 'player_goal_scorer_anytime',
+        'player_goal_scorer_first', 'player_goal_scorer_last', 'player_first_goal_scorer', 'player_last_goal_scorer'];
+
+    /** Hit / Miss / Push badge with the actual stat once graded; Live once the game has started (same as the profile view). */
+    function legResultBadge(l) {
+        if (l.result) {
+            const isScorer = SCORER_MARKETS.includes((l.market_key || '').replace(/_alternate$/, ''));
+            const actual   = l.actual_stat == null ? '' : (isScorer ? (Number(l.actual_stat) === 1 ? 'Scored' : 'No score') : String(Number(l.actual_stat)));
+            const label    = { win: 'Hit', loss: 'Miss', push: 'Push' }[l.result] || l.result;
+            return `<span class="wl-result-badge wl-result-badge--${escHtml(l.result)}" title="${actual ? 'Actual: ' + escHtml(actual) : ''}">${escHtml(label)}${actual ? ' &middot; ' + escHtml(actual) : ''}</span>`;
+        }
+        const start = l.game_start_time ? new Date(String(l.game_start_time).replace(' ', 'T') + 'Z') : null;
+        return start && start < new Date() ? '<span class="wl-result-badge wl-result-badge--progress">Live</span>' : '';
     }
 
     function savedKey(row) {
@@ -740,7 +807,8 @@ else :
                             <span class="feed-item__market">${escHtml(row.market_label)}</span>
                             <span class="feed-item__line">${fmtDir(row.direction)} ${escHtml(row.line)}</span>
                             <span class="feed-item__odds">${fmtOdds(row.odds)}</span>
-                            <span class="feed-item__book">${escHtml(row.book)}</span>
+                            <span class="feed-item__book">${escHtml(BOOK_LABELS[row.book] || row.book)}</span>
+                            ${legResultBadge(row)}
                             ${saveBtnHtml(row)}
                         </div>
                         <div class="feed-item__matchup">${escHtml(row.matchup)}</div>`;

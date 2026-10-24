@@ -2150,7 +2150,7 @@ function statsight_ajax_community_feed(): void {
     $offset          = (int) ( $_REQUEST['offset'] ?? 0 );
 
     $rows = $wpdb->get_results( $wpdb->prepare(
-        "SELECT w.player, w.market_key, w.market_label, w.line, w.direction, w.odds, w.book, w.matchup, w.sport, w.event_id, w.all_books, w.added_at, w.game_start_time, w.result,
+        "SELECT w.player, w.market_key, w.market_label, w.line, w.direction, w.odds, w.book, w.matchup, w.sport, w.event_id, w.all_books, w.added_at, w.game_start_time, w.result, w.actual_stat,
                 u.display_name, u.ID AS user_id
          FROM {$watchlist_table} w
          JOIN {$follows_table} f   ON f.following_id = w.user_id AND f.follower_id = %d
@@ -2383,7 +2383,7 @@ function statsight_ajax_community_profile(): void {
     $offset          = (int) ( $_REQUEST['offset'] ?? 0 );
 
     $rows = $wpdb->get_results( $wpdb->prepare(
-        "SELECT player, market_key, market_label, line, direction, odds, book, matchup, sport, event_id, all_books, added_at, game_start_time, result
+        "SELECT player, market_key, market_label, line, direction, odds, book, matchup, sport, event_id, all_books, added_at, game_start_time, result, actual_stat
          FROM {$watchlist_table}
          WHERE user_id    = %d
            AND deleted_at IS NULL
@@ -2407,14 +2407,18 @@ function statsight_ajax_community_profile(): void {
     if ( $is_own_profile || $collections_is_public ) {
         $parlays_table = $wpdb->prefix . 'statsight_parlays';
         $raw_parlays   = $wpdb->get_results( $wpdb->prepare(
-            "SELECT id, name, legs_json, created_at FROM {$parlays_table} WHERE user_id = %d ORDER BY created_at DESC",
+            "SELECT id, name, prop_ids, legs_json, created_at FROM {$parlays_table} WHERE user_id = %d ORDER BY created_at DESC",
             $profile_user_id
         ), ARRAY_A );
         foreach ( $raw_parlays as $p ) {
             $collections[] = [
                 'id'         => (int) $p['id'],
                 'name'       => $p['name'],
-                'legs'       => ! empty( $p['legs_json'] ) ? json_decode( $p['legs_json'], true ) : [],
+                'legs'       => statsight_enrich_collection_legs(
+                    $profile_user_id,
+                    json_decode( $p['prop_ids'] ?: '[]', true ) ?: [],
+                    ! empty( $p['legs_json'] ) ? json_decode( $p['legs_json'], true ) : []
+                ),
                 'created_at' => $p['created_at'],
             ];
         }
@@ -8131,6 +8135,53 @@ add_action( 'wp_ajax_statsight_get_leaderboard',        'statsight_ajax_get_lead
 add_action( 'wp_ajax_nopriv_statsight_get_leaderboard', 'statsight_ajax_get_leaderboard' );
 
 /**
+ * Add each collection leg's game details and result from the watchlist rows it was built from: game start time,
+ * sport, event, and once graded, result (win / loss / push) and the actual stat. Legs saved since this was added
+ * carry wl_id; older legs are matched to the collection's watchlist rows by player, market, line and direction.
+ * Soft-deleted watchlist rows still count, so removing a prop from the watchlist doesn't blank its collection leg.
+ *
+ * @param string[] $prop_ids Selection keys saved with the collection: "watchlistId" or "watchlistId:book".
+ */
+function statsight_enrich_collection_legs( int $user_id, array $prop_ids, array $legs ): array {
+    global $wpdb;
+    $ids = array_values( array_unique( array_filter( array_map( fn( $k ) => (int) strtok( (string) $k, ':' ), $prop_ids ) ) ) );
+    foreach ( $legs as $l ) {
+        if ( ! empty( $l['wl_id'] ) ) {
+            $ids[] = (int) $l['wl_id'];
+        }
+    }
+    $rows = [];
+    if ( $ids ) {
+        $in   = implode( ',', array_map( 'intval', array_unique( $ids ) ) );
+        $rows = $wpdb->get_results( $wpdb->prepare(
+            "SELECT id, event_id, sport, player, market_key, market_label, line, direction, game_start_time, result, actual_stat
+             FROM {$wpdb->prefix}statsight_watchlist WHERE user_id = %d AND id IN ($in)",
+            $user_id
+        ), ARRAY_A ) ?: [];
+    }
+    $by_id = array_column( $rows, null, 'id' );
+    $key   = fn( $r ) => strtolower( trim( ( $r['player'] ?? '' ) . '|' . ( $r['market_label'] ?? '' ) . '|' . (float) ( $r['line'] ?? 0 ) . '|' . ( $r['direction'] ?? 'over' ) ) );
+    $by_key = [];
+    foreach ( $rows as $r ) {
+        $by_key[ $key( $r ) ] = $r;
+    }
+
+    foreach ( $legs as &$l ) {
+        $r = ( ! empty( $l['wl_id'] ) ? ( $by_id[ (int) $l['wl_id'] ] ?? null ) : null ) ?? ( $by_key[ $key( $l ) ] ?? null );
+        if ( ! $r ) {
+            continue;   // watchlist row hard-deleted: keep whatever the leg itself saved
+        }
+        foreach ( [ 'event_id', 'sport', 'market_key', 'game_start_time', 'result', 'actual_stat' ] as $f ) {
+            if ( $r[ $f ] !== null && $r[ $f ] !== '' ) {
+                $l[ $f ] = $r[ $f ];
+            }
+        }
+    }
+    unset( $l );
+    return $legs;
+}
+
+/**
  * Save a parlay group.
  * POST: name, prop_ids (JSON array of selection keys), legs_json (JSON array of resolved leg objects)
  */
@@ -8165,6 +8216,12 @@ function statsight_ajax_parlay_save(): void {
                 'odds'         => (int) ( $l['odds']                      ?? 0 ),
                 'book'         => sanitize_text_field( $l['book']         ?? '' ),
                 'matchup'      => sanitize_text_field( $l['matchup']      ?? '' ),
+                // game details, so the leg still shows its game if the watchlist row is later removed
+                'wl_id'           => (int) ( $l['wl_id']                  ?? 0 ),
+                'event_id'        => sanitize_text_field( $l['event_id']        ?? '' ),
+                'sport'           => sanitize_key( $l['sport']                  ?? '' ),
+                'market_key'      => sanitize_key( $l['market_key']             ?? '' ),
+                'game_start_time' => sanitize_text_field( $l['game_start_time'] ?? '' ),
             ];
         }
     }
@@ -8205,6 +8262,7 @@ function statsight_ajax_parlay_get(): void {
         $parlay['legs'] = ! empty( $parlay['legs_json'] )
             ? json_decode( $parlay['legs_json'], true )
             : [];
+        $parlay['legs'] = statsight_enrich_collection_legs( $user_id, json_decode( $parlay['prop_ids'] ?: '[]', true ) ?: [], $parlay['legs'] );
         unset( $parlay['legs_json'] );
     }
     unset( $parlay );
