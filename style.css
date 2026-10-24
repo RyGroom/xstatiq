@@ -3,7 +3,7 @@ Theme Name: xstatiq
 Theme URI: https://statsight.com/
 Author: Statsight
 Description: Sports prop aggregator — compare betting odds across FanDuel, Fanatics, Bet365, Caesars, and more.
-Version: 9.55
+Version: 9.56
 Text Domain: statsight
 */
 
@@ -3166,6 +3166,13 @@ tr[data-player] .col-player:hover {
     margin-bottom: 1rem;
 }
 
+/* Game-by-game table: the market's number is bold, rows tinted by over / under the line */
+.player-modal__avgs-strip + .player-modal__gamelog-wrap { margin-top: 1rem; }
+.player-modal__game-val { font-weight: 700; }
+.player-modal__game--hit .player-modal__game-val { color: var(--color-win); }
+.player-modal__game--miss .player-modal__game-val { color: var(--color-loss); }
+.player-modal__game-res { color: var(--color-text-muted); font-size: 0.75em; margin-left: 0.25em; }
+
 /* Minutes comparison bar — basketball live games only */
 .player-modal__minutes-bar {
     margin-top: 0.75rem;
@@ -5288,7 +5295,26 @@ body.odds-modal-open {
 .wl-game-header__inner {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 0.5rem;
+}
+
+/* Kickoff time, pushed to the right edge of the game header */
+/* Game time under the matchup in the Arbitrage, Sharp and Market views */
+.matchup-when {
+    display: block;
+    font-size: 0.72rem;
+    color: var(--color-text-muted);
+    margin-top: 0.15rem;
+    white-space: nowrap;
+}
+
+.wl-game-header__time {
+    margin-left: auto;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--color-text-muted);
+    white-space: nowrap;
 }
 
 .wl-game-header__logo {
@@ -8963,7 +8989,7 @@ body.odds-modal-open {
 
 .leaderboard-header {
     display: grid;
-    grid-template-columns: 2rem 1fr auto auto auto;
+    grid-template-columns: 2rem minmax(0, 1fr) 4.75rem 4.5rem 3.5rem 4rem;
     gap: 0.5rem;
     align-items: center;
     padding: 0.4rem 0.75rem;
@@ -8982,7 +9008,7 @@ body.odds-modal-open {
 
 .leaderboard-row {
     display: grid;
-    grid-template-columns: 2rem 1fr auto auto auto;
+    grid-template-columns: 2rem minmax(0, 1fr) 4.75rem 4.5rem 3.5rem 4rem;
     gap: 0.5rem;
     align-items: center;
     padding: 0.6rem 0.75rem;
@@ -9038,6 +9064,25 @@ body.odds-modal-open {
     white-space: nowrap;
     min-width: 3.5rem;
     text-align: right;
+}
+
+.leaderboard-header span:nth-child(n+4) { text-align: right; }
+
+.leaderboard-row__roi {
+    font-size: 0.875rem;
+    font-weight: 700;
+    white-space: nowrap;
+    text-align: right;
+}
+.leaderboard-row__roi--pos { color: var(--color-win); }
+.leaderboard-row__roi--neg { color: var(--color-loss); }
+
+@media (max-width: 520px) {
+    .leaderboard-header,
+    .leaderboard-row { grid-template-columns: 1.5rem minmax(0, 1fr) 4rem 3rem 3.5rem; }
+    .leaderboard-header span:nth-child(3),
+    .leaderboard-row .pick-record__tier,
+    .leaderboard-row > span:nth-child(3) { display: none; }
 }
 
 .leaderboard-note {

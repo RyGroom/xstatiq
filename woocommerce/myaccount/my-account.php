@@ -729,7 +729,7 @@ asort( $all_books );
         {
             key:       'daily_digest',
             label:     'Daily Best Value digest',
-            desc:      'Morning summary of top-edge props',
+            desc:      'Late-morning (11am ET) summary of top-edge props',
             threshold: null,
             sport:     true,
         },

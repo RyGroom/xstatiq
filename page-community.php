@@ -1008,16 +1008,17 @@ else :
                             ${tier ? `<span class="pick-record__tier pick-record__tier--${escHtml(tier.mod)}">${escHtml(tier.label)}</span>` : '<span></span>'}
                             <span class="leaderboard-row__record">${u.wins}W&ndash;${u.losses}L</span>
                             <span class="leaderboard-row__rate">${pct}%</span>
+                            <span class="leaderboard-row__roi leaderboard-row__roi--${u.roi > 0 ? 'pos' : u.roi < 0 ? 'neg' : 'mid'}">${u.roi === null ? '—' : `${u.roi > 0 ? '+' : ''}${u.roi.toFixed(1)}%`}</span>
                         </a>`;
                 }).join('');
 
                 el.innerHTML = `
                     <div class="leaderboard-header">
                         <span>Rank</span><span>Picker</span><span>Tier</span>
-                        <span>Record</span><span>Hit %</span>
+                        <span>Record</span><span>Hit %</span><span>ROI</span>
                     </div>
                     <div class="leaderboard-rows">${rows}</div>
-                    <p class="leaderboard-note">Minimum 10 settled picks (saved before game start) required to appear.</p>`;
+                    <p class="leaderboard-note">Ranked by ROI (profit per $100 pick). Minimum 10 settled picks (saved before game start) required to appear.</p>`;
             })
             .catch(function () {
                 el.innerHTML = '<div class="community-empty"><p>Couldn\'t load the leaderboard right now — try refreshing.</p></div>';

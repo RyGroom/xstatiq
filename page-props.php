@@ -153,6 +153,8 @@ var statsightAjax = {
 // ── Shared display maps ────────────────────────────────────────────────────
 var BOOK_LABELS = <?php echo wp_json_encode( statsight_get_book_labels() ); ?>;
 
+// Fallback labels; the server's statsight_market_labels() (merged in below) wins, so the Arbitrage, Sharp and
+// Market views name markets exactly as the main props table does.
 var MARKET_LABELS = {
     // Basketball
     player_points:                   'Points',
@@ -233,6 +235,7 @@ var MARKET_LABELS = {
     player_head_to_head:             'H2H',
     h2h_3_balls:                     '3-Ball',
 };
+Object.assign(MARKET_LABELS, <?php echo wp_json_encode( statsight_market_labels() ); ?>);
 
 function fmtBook(key) {
     if (!key) return '—';
@@ -241,7 +244,17 @@ function fmtBook(key) {
 
 function fmtMarket(key) {
     if (!key) return '—';
-    return MARKET_LABELS[key] || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    return MARKET_LABELS[key] || MARKET_LABELS[key.replace(/_alternate$/, '')]
+        || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+// Game start in Eastern time ("Sun 1:00 PM ET"), for views that list props from many games. Uses the given ISO
+// time, else the game row's data-commence for that event. '' when unknown.
+function fmtGameWhen(eventId, iso) {
+    iso = iso || document.querySelector(`.game-row[data-event-id="${CSS.escape(eventId || '')}"]`)?.dataset.commence || '';
+    const d = iso ? new Date(iso) : null;
+    if (!d || isNaN(d)) return '';
+    return d.toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit' }) + ' ET';
 }
 </script>
 
@@ -994,89 +1007,57 @@ function fmtMarket(key) {
     }
 
     // Maps a market key to the primary ESPN boxscore stat label to display inline.
-    const MARKET_STAT = {
-        // NBA / NCAAB
-        player_points:               'PTS',
-        player_rebounds:             'REB',
-        player_assists:              'AST',
-        player_threes:               '3PT',
-        player_blocks:               'BLK',
-        player_steals:               'STL',
-        player_turnovers:            'TO',
-        player_blocks_steals:        'BLK', // show BLK; STL shown via tooltip
-        player_field_goals:          'FG',
-        player_frees_made:           'FT',
-        player_points_rebounds_assists: 'PTS',
-        player_points_rebounds:      'PTS',
-        player_points_assists:       'PTS',
-        player_rebounds_assists:     'REB',
-        // NFL
-        player_pass_yds:             'YDS',
-        player_pass_tds:             'TD',
-        player_pass_attempts:        'ATT',
-        player_pass_completions:     'COMP',
-        player_rush_yds:             'YDS',
-        player_rush_attempts:        'CAR',
-        player_reception_yds:        'YDS',
-        player_receptions:           'REC',
-        player_pass_interceptions:   'INT',
-        // MLB
-        player_strikeouts:           'K',
-        player_hits:                 'H',
-        player_home_runs:            'HR',
-        player_runs_scored:          'R',
-        player_rbis:                 'RBI',
-        batter_strikeouts:           'SO',
-        // NHL
-        player_shots_on_goal:        'SOG',
-        player_goals:                'G',
-        player_assists_hockey:       'A',
-        player_points_hockey:        'PTS',
-        player_blocked_shots:        'BS',
-        player_power_play_points:    'PTS',
-        player_total_saves:          'SV',
+    // Short label shown after the live number on a player's row ("18 PTS").
+    const LIVE_LABEL = {
+        // Basketball (hockey points/assists use the same keys and labels)
+        player_points: 'PTS', player_rebounds: 'REB', player_assists: 'AST', player_threes: '3PM',
+        player_blocks: 'BLK', player_steals: 'STL', player_blocks_steals: 'BLK+STL', player_turnovers: 'TO',
+        player_field_goals: 'FGM', player_frees_made: 'FTM', player_points_rebounds_assists: 'PRA',
+        player_points_rebounds: 'P+R', player_points_assists: 'P+A', player_rebounds_assists: 'R+A',
+        // Football
+        player_pass_yds: 'PASS YDS', player_pass_tds: 'PASS TD', player_pass_attempts: 'ATT',
+        player_pass_completions: 'CMP', player_pass_interceptions: 'INT', player_pass_longest_completion: 'LNG',
+        player_rush_yds: 'RUSH YDS', player_rush_attempts: 'CAR', player_rush_tds: 'RUSH TD', player_rush_longest: 'LNG',
+        player_reception_yds: 'REC YDS', player_receptions: 'REC', player_reception_tds: 'REC TD',
+        player_reception_longest: 'LNG', player_tds_over: 'TD', player_sacks: 'SACKS', player_solo_tackles: 'SOLO',
+        player_tackles_assists: 'TKL', player_defensive_interceptions: 'INT',
+        // Baseball
+        batter_hits: 'H', batter_total_bases: 'TB', batter_home_runs: 'HR', batter_singles: '1B',
+        batter_doubles: '2B', batter_rbis: 'RBI', batter_runs_scored: 'R', batter_hits_runs_rbis: 'H+R+RBI',
+        batter_walks: 'BB', batter_strikeouts: 'K', batter_stolen_bases: 'SB', pitcher_strikeouts: 'K',
+        pitcher_hits_allowed: 'H', pitcher_walks: 'BB', pitcher_earned_runs: 'ER', pitcher_outs: 'OUTS',
+        // Hockey
+        player_goals: 'G', player_shots_on_goal: 'SOG', player_total_saves: 'SV', player_power_play_points: 'PPP',
     };
 
     /**
-     * Stamp player rows with their current live stat from the ESPN boxscore.
-     * boxscore = { "Player Name": { "PTS": "22", "REB": "8", ... }, ... }
+     * Stamp player rows with their current live number from the ESPN boxscore.
+     * boxscore = { "Player Name": { "PTS": "22", ..., "_v": { "player_points": 22, ... } }, ... }
+     * '_v' is each market's number worked out on the server, so stats that share a label (NFL rushing and
+     * receiving "YDS") and combos (PRA) come out right.
      */
     function applyLiveStats(detail, boxscore, sport = '') {
-        // Loose name match — strips suffixes (Jr., Sr., II, III) and punctuation
-        // so "Jabari Smith Jr." matches ESPN's "Jabari Smith" and vice versa.
-        const normName = (n) => n.toLowerCase()
-            .replace(/\b(jr|sr|ii|iii|iv)\.?$/i, '')
-            .replace(/[.']/g, '')
-            .trim();
-        const findStats = (playerName) => {
-            if (boxscore[playerName]) return boxscore[playerName];
-            const lower = playerName.toLowerCase();
-            const key = Object.keys(boxscore).find(k => k.toLowerCase() === lower);
-            if (key) return boxscore[key];
-            // Suffix-normalized fallback
-            const norm = normName(playerName);
-            const normKey = Object.keys(boxscore).find(k => normName(k) === norm);
-            return normKey ? boxscore[normKey] : null;
-        };
+        // Same normalisation as the server's statsight_normalize_name(): accents, punctuation and suffixes
+        // don't count, so "Nikola Jokić" matches "Nikola Jokic" and "Jabari Smith Jr." matches "Jabari Smith".
+        const normName = (n) => String(n).normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .replace(/-/g, ' ').replace(/[^a-z0-9 ]/gi, '')
+            .replace(/\b(jr|sr|ii|iii|iv)\s*$/i, '').trim().toLowerCase();
+        const byNorm = {};
+        Object.keys(boxscore).forEach(k => { byNorm[normName(k)] = boxscore[k]; });
+        const findStats = (playerName) => boxscore[playerName] || byNorm[normName(playerName)] || null;
 
         detail.querySelectorAll('tr[data-player]').forEach(function (row) {
-            const player    = row.dataset.player;
             const marketKey = (row.dataset.market || '').replace(/_alternate$/, '');
-            const isHockey  = sport.startsWith('icehockey');
-            const NHL_STAT  = { player_assists: 'A', player_points: 'PTS' };
-            const statLabel = (isHockey && NHL_STAT[marketKey]) ? NHL_STAT[marketKey] : MARKET_STAT[marketKey];
-            const stats     = findStats(player);
-
-            if (!stats || !statLabel || !stats[statLabel] || stats[statLabel] === '—') return;
+            const value     = findStats(row.dataset.player)?._v?.[marketKey];
+            const label     = LIVE_LABEL[marketKey];
+            if (typeof value !== 'number' || !label) return;
 
             const playerCell = row.querySelector('.col-player');
             if (!playerCell || playerCell.querySelector('.live-stat')) return;
 
             const chip = document.createElement('span');
             chip.className   = 'live-stat';
-            // For made/attempted stats (e.g. "3/7" or "1-3"), show only the made count.
-            const displayVal = String(stats[statLabel]).split(/[\/\-]/)[0];
-            chip.textContent = `${displayVal} ${statLabel}`;
+            chip.textContent = `${value} ${label}`;
             chip.title       = 'Current game stat';
             // Insert before the hit-rate chip so order is: name → live stat → hit rate
             const hitChip = playerCell.querySelector('.hit-rate-chip');
@@ -1546,17 +1527,31 @@ function fmtMarket(key) {
                     detail.querySelectorAll('tr[data-player][data-market]').forEach(function (row) {
                         const marketKey = row.dataset.market;
                         const player    = row.dataset.player;
+                        const playerData = props[marketKey]?.[player];
+                        if (!playerData) return;
+
+                        // Yes/no rows (anytime TD, first basket…) have no stepper; update their cells directly.
+                        if (row.dataset.yn) {
+                            refreshYesNoRow(row, playerData.yn ?? {});
+                            return;
+                        }
+
                         const stepper   = row.querySelector('.line-stepper');
                         const freeTd    = stepper ? null : row.querySelector('td.col-line-stepper[data-lines]');
                         const dataSource = stepper ?? freeTd;
                         if (!dataSource) return;
 
-                        const playerData = props[marketKey]?.[player];
-                        if (!playerData) return;
-
-                        // Update the data attributes with the fresh line map.
+                        // Update the data attributes with the fresh line map, keeping the same shape as at
+                        // render: priced numeric lines only (a stray 'yn' key would become a stepper stop),
+                        // unless this row is itself the yes/no line.
                         // Write raw JSON — dataset setter doesn't need &quot; encoding.
-                        dataSource.dataset.lines = JSON.stringify(playerData);
+                        const curVal = dataSource.querySelector('.line-stepper__val')?.textContent.trim();
+                        const fresh  = curVal === 'yn' ? playerData : Object.fromEntries(
+                            Object.entries(playerData)
+                                .filter(([k, bks]) => k !== 'yn' && Object.values(bks).some(o => o?.over != null))
+                                .sort(([a], [b]) => parseFloat(a) - parseFloat(b))
+                        );
+                        dataSource.dataset.lines = JSON.stringify(fresh);
 
                         // Update the default line if it changed.
                         const newDefault = default_lines[marketKey]?.[player];
@@ -1935,7 +1930,10 @@ function fmtMarket(key) {
                         }).join('');
                         const wkey1 = `${escHtml(player)}|${escHtml(marketKey)}|${escHtml(eventId)}`;
                         const ynLine = default_lines[marketKey]?.[player] ?? 'yn';
-                        return `<tr data-player="${escHtml(player)}" data-market="${escHtml(marketKey)}" data-event-id="${escHtml(eventId)}"><td class="col-player">${escHtml(player)}<span class="hit-rate-chip hit-rate-chip--skeleton" aria-hidden="true"></span></td>${cells}<td class="col-track"><button class="track-bet-btn" data-wkey="${wkey1}" aria-label="Add to watchlist"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg></button><button class="alert-btn" data-player="${escHtml(player)}" data-market="${escHtml(marketKey)}" data-event-id="${escHtml(eventId)}" data-line="${escHtml(ynLine)}" aria-label="Set odds alert for ${escHtml(player)}"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></button></td></tr>`;
+                        // In a market where other players have numeric lines the header has Line and EV%
+                        // columns; pad this row so its odds sit under the right book.
+                        const padCells = isYesNo ? '' : '<td class="col-line-stepper"></td><td class="col-ev">—</td>';
+                        return `<tr data-player="${escHtml(player)}" data-market="${escHtml(marketKey)}" data-event-id="${escHtml(eventId)}" data-yn="1"><td class="col-player">${escHtml(player)}<span class="hit-rate-chip hit-rate-chip--skeleton" aria-hidden="true"></span></td>${padCells}${cells}<td class="col-track"><button class="track-bet-btn" data-wkey="${wkey1}" aria-label="Add to watchlist"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg></button><button class="alert-btn" data-player="${escHtml(player)}" data-market="${escHtml(marketKey)}" data-event-id="${escHtml(eventId)}" data-line="${escHtml(ynLine)}" aria-label="Set odds alert for ${escHtml(player)}"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></button></td></tr>`;
                     }
 
                     if (allLineKeys.length === 0) return '';
@@ -2054,34 +2052,65 @@ function fmtMarket(key) {
     }
 
     /**
-     * Compute no-vig EV% for the best available over odds given all books' over prices.
-     * Returns null if fewer than 2 books have data (can't remove vig without both sides or consensus).
-     * Formula: (no_vig_prob × best_decimal_payout) - 1, expressed as a percentage.
+     * No-vig EV% of the best shown price — mirrors statsight_calc_value() (functions.php) and calcValue()
+     * on the Best Value page, so the three agree:
+     * each book's fair prob is its price with its own margin removed (over / (over + under)); one-sided books
+     * use the median margin of the two-sided ones, or 1.07. Consensus = median fair prob of every book except
+     * the best one — all books, not just the ones the user shows. EV = consensus × decimal payout − 1.
+     * Returns { ev, stale } or null when no other book prices this line.
      */
-    function calcEV(bkData, bkList, bestOverOdds) {
-        // Remove vig per book individually, then average the resulting true probabilities.
-        // This is more accurate than averaging raw implied probs across books separately,
-        // since each book's over/under pair is self-contained and has its own vig level.
-        const noVigProbs = bkList
-            .filter(bk => bkData[bk]?.over != null && bkData[bk]?.under != null)
-            .map(bk => {
-                const overImpl  = americanToImplied(bkData[bk].over);
-                const underImpl = americanToImplied(bkData[bk].under);
-                return overImpl / (overImpl + underImpl); // no-vig prob for this book
-            });
+    const ONE_SIDED_MARGIN = 1.07;
+    const STALE_RATIO      = 0.5;
+    function calcEV(bkData, bkList) {
+        const median = xs => { const v = [...xs].sort((a, b) => a - b), n = v.length; return n % 2 ? v[(n - 1) / 2] : (v[n / 2 - 1] + v[n / 2]) / 2; };
 
-        // Need at least 2 books with both sides to get a reliable consensus
-        if (noVigProbs.length < 2) return null;
+        let bestBk = null;
+        bkList.forEach(bk => {
+            const v = bkData[bk]?.over;
+            if (v != null && (bestBk === null || v > bkData[bestBk].over)) bestBk = bk;
+        });
+        if (bestBk === null) return null;
 
-        const noVigProb = noVigProbs.reduce((s, p) => s + p, 0) / noVigProbs.length;
+        const margins = Object.values(bkData)
+            .filter(o => o?.over != null && o?.under != null)
+            .map(o => americanToImplied(o.over) + americanToImplied(o.under));
+        const oneSided = margins.length ? median(margins) : ONE_SIDED_MARGIN;
 
-        // Best available profit per $1 risked
-        const bestDecimal = bestOverOdds >= 0
-            ? bestOverOdds / 100
-            : 100 / Math.abs(bestOverOdds);
+        const fair = Object.entries(bkData)
+            .filter(([bk, o]) => bk !== bestBk && o?.over != null)
+            .map(([, o]) => americanToImplied(o.over) / (o.under != null ? americanToImplied(o.over) + americanToImplied(o.under) : oneSided));
+        if (fair.length === 0) return null;
 
-        const ev = (noVigProb * bestDecimal) - (1 - noVigProb);
-        return parseFloat((ev * 100).toFixed(1));
+        const fairProb = median(fair);
+        const best     = bkData[bestBk].over;
+        const decimal  = best >= 0 ? 1 + best / 100 : 1 + 100 / Math.abs(best);
+        return {
+            ev:    parseFloat(((fairProb * decimal - 1) * 100).toFixed(1)),
+            stale: americanToImplied(best) < STALE_RATIO * fairProb,
+        };
+    }
+
+    /**
+     * Refresh a yes/no row's odds cells (no stepper) from a fresh { bookKey: { over } } map. Cells are matched by
+     * book key, and the combo-breakdown button is kept.
+     */
+    function refreshYesNoRow(row, bkData) {
+        let bestScore = -Infinity;
+        row.querySelectorAll('td.odds-cell[data-bk]').forEach(cell => {
+            const v = bkData[cell.dataset.bk]?.over ?? null;
+            if (v !== null) bestScore = Math.max(bestScore, oddsScore(v));
+        });
+        row.querySelectorAll('td.odds-cell[data-bk]').forEach(cell => {
+            const v    = bkData[cell.dataset.bk]?.over ?? null;
+            const best = v !== null && oddsScore(v) === bestScore;
+            const btn  = cell.querySelector('.combo-breakdown-btn');
+            cell.className = 'odds-cell' + (best ? ' odds-best' : '') + (v === null ? ' odds-na' : '');
+            cell.innerHTML = v !== null ? `<span class="${best ? 'odds-badge--best' : ''}">${fmtOdds(v)}</span>` : '—';
+            if (btn && v !== null) {
+                btn.dataset.odds = v;
+                cell.appendChild(btn);
+            }
+        });
     }
 
     function refreshPlayerRow(row) {
@@ -2116,18 +2145,21 @@ function fmtMarket(key) {
             }
         });
 
-        // Compute and render EV%
+        // Compute and render EV% for the selected line (cleared when it can't be worked out, so a stepped
+        // line never shows the previous line's figure)
         const evCell = row.querySelector('.col-ev');
-        if (evCell && bestOverOdds !== null) {
-            const ev = calcEV(bkData, bkList, bestOverOdds);
-            if (ev !== null) {
+        if (evCell) {
+            const value = bestOverOdds !== null ? calcEV(bkData, bkList) : null;
+            if (value && !value.stale) {
+                const ev  = value.ev;
                 const pos = ev >= 0;
                 evCell.textContent = (pos ? '+' : '') + ev + '%';
                 evCell.className   = 'col-ev ' + (pos ? 'col-ev--pos' : 'col-ev--neg');
-                evCell.title       = `Expected Value: ${pos ? '+' : ''}${ev}% vs no-vig line`;
+                evCell.title       = `Expected Value: ${pos ? '+' : ''}${ev}% vs no-vig consensus of all books`;
             } else {
                 evCell.textContent = '—';
                 evCell.className   = 'col-ev';
+                evCell.title       = value?.stale ? 'Best price looks stale or off-market' : 'Expected Value vs no-vig line';
             }
         }
 
@@ -2455,6 +2487,7 @@ function fmtMarket(key) {
         Object.entries(allProps).forEach(function ([eventId, eventData]) {
             if (isEventEnded(sportKey, eventId)) return;
             const matchup        = eventData.matchup || '';
+            const gameWhen       = fmtGameWhen(eventId, eventData.game_time);
             const books          = eventData.books   || {};
             const allBkList      = Object.keys(books);
             const activeBooks    = statsightAjax.activeBooks;
@@ -2504,7 +2537,7 @@ function fmtMarket(key) {
                         const arbPct   = (grossReturn - 1) * 100; // profit as % of total staked
 
                         arbs.push({
-                            player: player, marketLabel, marketKey, matchup, eventId,
+                            player: player, marketLabel, marketKey, matchup, gameWhen, eventId,
                             line: lineVal,
                             overOdds: bestOverOdds, overBk: bestOverBk,
                             underOdds: bestUnderOdds, underBk: bestUnderBk,
@@ -2556,7 +2589,7 @@ function fmtMarket(key) {
                 <tr data-player="${escHtml(a.player)}" data-event-id="${escHtml(a.eventId)}" data-market="${escHtml(a.marketKey)}" class="arb-row">
                     <td class="arb-col-player">${escHtml(a.player)}</td>
                     <td class="arb-col-market">${escHtml(a.marketLabel)}</td>
-                    <td class="arb-col-matchup"><button class="matchup-link">${escHtml(a.matchup)}</button></td>
+                    <td class="arb-col-matchup"><button class="matchup-link">${escHtml(a.matchup)}</button>${a.gameWhen ? `<span class="matchup-when">${escHtml(a.gameWhen)}</span>` : ''}</td>
                     <td class="arb-col-line">${escHtml(a.line)}</td>
                     <td class="arb-col-odds">
                         <span class="arb-side arb-side--over">
@@ -2730,7 +2763,7 @@ function fmtMarket(key) {
                 <tr data-player="${escHtml(m.player)}" data-event-id="${escHtml(m.event_id)}" data-market="${escHtml(m.market_key)}">
                     <td class="sharp-col-player">${escHtml(m.player)}</td>
                     <td class="sharp-col-market">${escHtml(label)}</td>
-                    <td class="sharp-col-matchup"><button class="matchup-link">${escHtml(m.matchup)}</button></td>
+                    <td class="sharp-col-matchup"><button class="matchup-link">${escHtml(m.matchup)}</button>${(() => { const w = fmtGameWhen(m.event_id, m.game_time); return w ? `<span class="matchup-when">${escHtml(w)}</span>` : ''; })()}</td>
                     <td class="sharp-col-open">${m.open_line}</td>
                     <td class="sharp-col-current">${m.current_line}</td>
                     <td class="sharp-col-move sharp-col-move--${dir}">${arrow} ${deltaStr}</td>
@@ -2876,7 +2909,7 @@ function fmtMarket(key) {
         markets.forEach(function ({ key, label }) {
             const opt = document.createElement('option');
             opt.value       = key;
-            opt.textContent = label;
+            opt.textContent = MARKET_LABELS[key] || label; // same names as the main props table
             select.appendChild(opt);
         });
         select.dataset.populated = '1';
@@ -2976,7 +3009,7 @@ function fmtMarket(key) {
                     data-event-id="${escHtml(row.event_id)}"
                 >
                     <td class="col-player">${escHtml(row.player)}</td>
-                    <td class="col-matchup"><button class="matchup-link">${escHtml(row.matchup)}</button></td>
+                    <td class="col-matchup"><button class="matchup-link">${escHtml(row.matchup)}</button>${(() => { const w = fmtGameWhen(row.event_id, row.game_time); return w ? `<span class="matchup-when">${escHtml(w)}</span>` : ''; })()}</td>
                     ${lineCell}
                     <td class="col-ev" title="Expected Value vs no-vig line">—</td>
                     ${oddsCells}
@@ -3567,65 +3600,17 @@ function fmtMarket(key) {
     });
 
     /**
-     * Map a market key to the ESPN stat column(s) that should be summed
-     * to produce the comparable value for hit rate.
-     * Returns an array of column label strings.
+     * The market's number in one game-log row. The server works it out (statsight_market_stat_value), so
+     * combos, total bases, pitcher outs and football's repeated YDS / TD columns all come out right.
+     * Null when the log doesn't carry the stat for that game.
      */
-    function hitRateColumns(marketKey, sport) {
-        const mk  = (marketKey || '').replace(/_alternate$/, '');
-        const isHockey = sport && sport.includes('icehockey');
+    function gameValue(g) {
+        return g && typeof g.value === 'number' ? g.value : null;
+    }
 
-        // Keys that collide between sports — resolve by sport first.
-        if (isHockey) {
-            const hockeyMap = {
-                'player_goals':              ['G'],
-                'player_assists':            ['A'],
-                'player_points':             ['PTS'],
-                'player_shots_on_goal':      ['S'],
-                'player_blocked_shots':      ['BLK'],
-                'player_power_play_points':  ['PPG', 'PPA'],
-                'player_total_saves':        ['SV'],
-            };
-            if (hockeyMap[mk]) return hockeyMap[mk];
-        }
-
-        const map = {
-            // Basketball
-            'player_points':                  ['PTS'],
-            'player_rebounds':                ['REB'],
-            'player_assists':                 ['AST'],
-            'player_threes':                  ['3PT'],
-            'player_blocks':                  ['BLK'],
-            'player_steals':                  ['STL'],
-            'player_blocks_steals':           ['BLK', 'STL'],
-            'player_turnovers':               ['TO'],
-            'player_field_goals':             ['FG'],
-            'player_frees_made':              ['FT'],
-            'player_points_rebounds_assists': ['PTS', 'REB', 'AST'],
-            'player_points_rebounds':         ['PTS', 'REB'],
-            'player_points_assists':          ['PTS', 'AST'],
-            'player_rebounds_assists':        ['REB', 'AST'],
-            // NFL
-            'player_pass_yds':               ['YDS'],
-            'player_pass_tds':               ['TD'],
-            'player_pass_attempts':          ['CMP'],
-            'player_pass_completions':       ['CMP'],
-            'player_rush_yds':               ['YDS'],
-            'player_rush_attempts':          ['CAR'],
-            'player_reception_yds':          ['YDS'],
-            'player_receptions':             ['REC'],
-            // MLB
-            'batter_hits':                   ['H'],
-            'batter_total_bases':            ['H'],
-            'batter_home_runs':              ['HR'],
-            'batter_rbis':                   ['RBI'],
-            'batter_runs_scored':            ['R'],
-            'batter_hits_runs_rbis':         ['H', 'R', 'RBI'],
-            'batter_walks':                  ['BB'],
-            'batter_strikeouts':             ['SO'],
-            'pitcher_strikeouts':            ['SO'],
-        };
-        return map[mk] ?? null;
+    /** Short header for the market's own number in the game-log table ("PRA", "REC YDS"). */
+    function marketShortLabel(marketKey) {
+        return LIVE_LABEL[(marketKey || '').replace(/_alternate$/, '')] || 'Stat';
     }
 
     const POSITION_BLURBS = {
@@ -3722,15 +3707,25 @@ function fmtMarket(key) {
         let fightRowsHtml = '';
         if (fights.length > 0) {
             fightRowsHtml = fights.map(f => {
-                const resultCls = f.result === 'W' || f.result === 'Win' ? 'mma-result--win'
-                                : f.result === 'L' || f.result === 'Loss' ? 'mma-result--loss'
+                // A fight with no winner comes through as a loss; the method says if it was a draw or no contest.
+                const method = String(f.method || '').toLowerCase();
+                const result = /draw/.test(method) ? 'D'
+                             : /no contest|\bnc\b|overturned/.test(method) ? 'NC'
+                             : f.result;
+                const resultCls = result === 'W' || result === 'Win' ? 'mma-result--win'
+                                : result === 'L' || result === 'Loss' ? 'mma-result--loss'
                                 : 'mma-result--nc';
                 const roundInfo = f.round ? `R${f.round}${f.time ? ' ' + f.time : ''}` : (f.time || '—');
+                // Full timestamps are shown as the Eastern date (a Saturday-night card is still Saturday);
+                // a bare YYYY-MM-DD is shown as given.
+                const when = f.date && f.date.includes('T')
+                    ? new Date(f.date).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+                    : f.date;
                 return `
                     <tr>
-                        <td>${escHtml(f.date || '—')}</td>
+                        <td>${escHtml(when || '—')}</td>
                         <td class="mma-opponent">${escHtml(f.opponent || '—')}</td>
-                        <td><span class="mma-result-badge ${resultCls}">${escHtml(f.result || '—')}</span></td>
+                        <td><span class="mma-result-badge ${resultCls}">${escHtml(result || '—')}</span></td>
                         <td>${escHtml(f.method || '—')}</td>
                         <td>${escHtml(roundInfo)}</td>
                     </tr>`;
@@ -3804,25 +3799,38 @@ function fmtMarket(key) {
         let gamelogHtml = '';
         let gamelogChartData = null; // initialised after innerHTML is set
         if (gamelog && gamelog.length > 0) {
-            const statCols = hitRateColumns(marketKey, sport);
-
-            // Compute per-game combined stat value for the chart bars
-            const chartValues = gamelog.map(function (g) {
-                if (!statCols) return null;
-                return statCols.reduce(function (sum, col) {
-                    const raw = parseFloat(g.stats[col]);
-                    return sum + (isNaN(raw) ? 0 : raw);
-                }, 0);
-            });
+            // The market's number in each game, for the chart bars and hit rate
+            const chartValues = gamelog.map(gameValue);
+            const counted     = chartValues.filter(v => v !== null);
 
             // Hit rate summary badge
             let hitRateHtml = '';
-            if (propLine !== null && statCols) {
-                const hits = chartValues.filter(v => v !== null && v > propLine).length;
-                const pct  = Math.round((hits / gamelog.length) * 100);
+            if (propLine !== null && counted.length) {
+                const hits = counted.filter(v => v > propLine).length;
+                const pct  = Math.round((hits / counted.length) * 100);
                 const cls  = pct >= 60 ? 'hit-rate--high' : pct <= 40 ? 'hit-rate--low' : 'hit-rate--mid';
-                hitRateHtml = `<span class="hit-rate ${cls}">${hits}/${gamelog.length} over ${propLine} (${pct}%)</span>`;
+                hitRateHtml = `<span class="hit-rate ${cls}">${hits}/${counted.length} over ${propLine} (${pct}%)</span>`;
             }
+
+            // Game-by-game table, newest first; rows tinted by whether the market went over the line
+            const gameRows = gamelog.map(function (g, i) {
+                const v   = chartValues[i];
+                const cls = propLine !== null && v !== null ? (v > propLine ? 'player-modal__game--hit' : 'player-modal__game--miss') : '';
+                const res = g.result ? ` <span class="player-modal__game-res">${escHtml(g.result)}</span>` : '';
+                return `<tr class="${cls}">
+                        <td>${escHtml(g.date)}</td>
+                        <td>${g.at_vs === '@' ? '@' : 'vs'} ${escHtml(g.opponent)}${res}</td>
+                        ${counted.length ? `<td class="player-modal__game-val">${v !== null ? escHtml(String(v)) : '—'}</td>` : ''}
+                        ${statCells(g.stats)}
+                    </tr>`;
+            }).reverse().join('');
+            const gameTableHtml = `
+                    <div class="props-table-wrap player-modal__gamelog-wrap">
+                        <table class="props-table player-modal__table player-modal__gamelog-table">
+                            <thead><tr><th>Date</th><th>Opp</th>${counted.length ? `<th>${escHtml(marketShortLabel(marketKey))}</th>` : ''}${headerCells}</tr></thead>
+                            <tbody>${gameRows}</tbody>
+                        </table>
+                    </div>`;
 
             // Averages strip (replaces the averages table rows)
             // label = ESPN key (e.g. 'FGM'), header = display name (e.g. 'FG')
@@ -3841,7 +3849,7 @@ function fmtMarket(key) {
                         <span class="player-modal__avg-item-val">${escHtml(season_averages?.[label] ?? '—')}</span>
                     </div>`).join('');
 
-            const showChart = statCols !== null;
+            const showChart = counted.length > 0;
             const canvasId  = 'player-gamelog-chart';
 
             gamelogHtml = `
@@ -3894,6 +3902,7 @@ function fmtMarket(key) {
                             <div class="player-modal__avgs-group-items">${seasonAvgItems}</div>
                         </div>
                     </div>
+                    ${gameTableHtml}
                 </div>`;
 
             if (showChart) {
@@ -4237,20 +4246,19 @@ function fmtMarket(key) {
     function computeSyncSignals(row, data, marketKey, propLine) {
         const signals  = [];
         const { gamelog, averages, season_averages, sport } = data;
-        const statCols = hitRateColumns(marketKey, sport);
         const detail   = row?.closest('.game-detail');
+        const vals     = (gamelog || []).map(gameValue).filter(v => v !== null);
 
         // ── 1. Hit Rate (0.30) ───────────────────────────────────────────────
-        if (propLine !== null && statCols && gamelog && gamelog.length > 0) {
-            const vals = gamelog.map(g => statCols.reduce((s, c) => s + (parseFloat(g.stats[c]) || 0), 0));
+        if (propLine !== null && vals.length > 0) {
             const hits = vals.filter(v => v > propLine).length;
             const pct  = Math.round((hits / vals.length) * 100);
             signals.push({ label: 'Hit Rate', weight: 0.30, value: pct / 10, display: `${pct}% (${hits}/${vals.length} games)` });
         }
 
         // ── 2. Recent Avg (0.25) ─────────────────────────────────────────────
-        if (propLine !== null && statCols && averages) {
-            const recentAvg = statCols.reduce((s, c) => s + (parseFloat(averages[c]) || 0), 0);
+        if (propLine !== null && typeof data.market_avg === 'number') {
+            const recentAvg = data.market_avg;
             if (recentAvg > 0) {
                 signals.push({
                     label:   'Recent Avg',
@@ -4276,8 +4284,8 @@ function fmtMarket(key) {
         }
 
         // ── 4. Season Avg (0.10) ─────────────────────────────────────────────
-        if (propLine !== null && statCols && season_averages) {
-            const seasonAvg = statCols.reduce((s, c) => s + (parseFloat(season_averages[c]) || 0), 0);
+        if (propLine !== null && typeof data.market_season_avg === 'number') {
+            const seasonAvg = data.market_season_avg;
             if (seasonAvg > 0) {
                 signals.push({
                     label:   'Season Avg',
@@ -4407,18 +4415,11 @@ function fmtMarket(key) {
 
         if (!gamelog || gamelog.length === 0 || propLine === null) return;
 
-        const statCols = hitRateColumns(marketKey, sport);
-        if (!statCols) return;
+        const vals = gamelog.map(gameValue).filter(v => v !== null);
+        if (!vals.length) return;
 
-        const hits = gamelog.filter(function (g) {
-            const val = statCols.reduce(function (sum, col) {
-                const raw = parseFloat(g.stats[col]);
-                return sum + (isNaN(raw) ? 0 : raw);
-            }, 0);
-            return val > propLine;
-        }).length;
-
-        const total = gamelog.length;
+        const hits  = vals.filter(v => v > propLine).length;
+        const total = vals.length;
         const pct   = Math.round((hits / total) * 100);
         const cls   = pct >= 60 ? 'hit-rate-chip--high' : pct <= 40 ? 'hit-rate-chip--low' : 'hit-rate-chip--mid';
 
@@ -5800,8 +5801,6 @@ function fmtMarket(key) {
 
             const signals = [];
             const detail   = row?.closest('.game-detail');
-            const statCols = hitRateColumns(marketKey, sport);
-
             // ── Signal 1: EV% (0.20) ────────────────────────────────────────────
             // Market-implied edge over the book's no-vig line.
             if (row) {
@@ -5818,12 +5817,12 @@ function fmtMarket(key) {
             }
 
             // ── Signals 2–4: player performance signals ──────────────────────────
-            if (statsData && propLineNum !== null && statCols) {
-                const { gamelog, averages, season_averages } = statsData;
+            if (statsData && propLineNum !== null) {
+                const { gamelog, market_avg, market_season_avg } = statsData;
+                const vals = (gamelog || []).map(gameValue).filter(v => v !== null);
 
                 // Signal 2: Hit Rate (0.30) — how often the player cleared this exact line historically
-                if (gamelog && gamelog.length > 0) {
-                    const vals = gamelog.map(g => statCols.reduce((s, c) => s + (parseFloat(g.stats[c]) || 0), 0));
+                if (vals.length > 0) {
                     const hits = vals.filter(v => v > propLineNum).length;
                     const pct  = Math.round((hits / vals.length) * 100);
                     signals.push({
@@ -5835,8 +5834,8 @@ function fmtMarket(key) {
                 }
 
                 // Signal 3: Recent Avg (0.25) — last N games trend vs the line
-                if (averages) {
-                    const recentAvg = statCols.reduce((s, c) => s + (parseFloat(averages[c]) || 0), 0);
+                if (typeof market_avg === 'number') {
+                    const recentAvg = market_avg;
                     if (recentAvg > 0) {
                         signals.push({
                             label:   'Recent Avg',
@@ -5848,8 +5847,8 @@ function fmtMarket(key) {
                 }
 
                 // Signal 4: Season Avg (0.10) — full-season baseline, lower weight mid-season dilution
-                if (season_averages) {
-                    const seasonAvg = statCols.reduce((s, c) => s + (parseFloat(season_averages[c]) || 0), 0);
+                if (typeof market_season_avg === 'number') {
+                    const seasonAvg = market_season_avg;
                     if (seasonAvg > 0) {
                         signals.push({
                             label:   'Season Avg',
@@ -6111,38 +6110,31 @@ function fmtMarket(key) {
     }
 
     function renderComparison(slotA, dataA, slotB, dataB) {
-        const statColsA = hitRateColumns(slotA.marketKey, dataA.sport);
-        const statColsB = hitRateColumns(slotB.marketKey, dataB.sport);
-
-        const buildStatRows = (data, slot, statCols) => {
-            const { gamelog, averages, season_averages } = data;
+        const buildStatRows = (data, slot) => {
+            const { gamelog } = data;
             if (!gamelog || gamelog.length === 0) return '<p class="compare-no-data">No recent game data.</p>';
 
-            // Averages row
-            const avgLabel = statCols ? statCols.join('+') : 'Stats';
-            const recentAvg = averages ? (statCols || []).map(c => averages[c] ?? '—').join(' / ') : '—';
-            const seasonAvg = season_averages ? (statCols || []).map(c => season_averages[c] ?? '—').join(' / ') : '—';
+            // Averages of the market's own number (e.g. PRA, not P / R / A)
+            const recentAvg = typeof data.market_avg === 'number' ? data.market_avg.toFixed(1) : '—';
+            const seasonAvg = typeof data.market_season_avg === 'number' ? data.market_season_avg.toFixed(1) : '—';
 
             // Hit rate
+            const vals = gamelog.map(gameValue).filter(v => v !== null);
             let hitRateHtml = '';
-            if (slot.propLine !== null && statCols && gamelog.length > 0) {
-                const hits = gamelog.filter(function (g) {
-                    const val = statCols.reduce((s, c) => s + (parseFloat(g.stats[c]) || 0), 0);
-                    return val > slot.propLine;
-                }).length;
-                const pct = Math.round((hits / gamelog.length) * 100);
+            if (slot.propLine !== null && vals.length > 0) {
+                const hits = vals.filter(v => v > slot.propLine).length;
+                const pct = Math.round((hits / vals.length) * 100);
                 const cls = pct >= 60 ? 'hit-rate-chip--high' : pct <= 40 ? 'hit-rate-chip--low' : 'hit-rate-chip--mid';
-                hitRateHtml = `<span class="hit-rate-chip ${cls}" style="font-size:0.85rem;padding:0.2em 0.6em">${hits}/${gamelog.length} (${pct}%)</span>`;
+                hitRateHtml = `<span class="hit-rate-chip ${cls}" style="font-size:0.85rem;padding:0.2em 0.6em">${hits}/${vals.length} (${pct}%)</span>`;
             }
 
             // Last 5 games (gamelog is oldest-first; take the tail)
             const last5 = gamelog.slice(-5).reverse().map(function (g) {
-                const val = statCols ? statCols.reduce((s, c) => s + (parseFloat(g.stats[c]) || 0), 0) : '—';
-                const hit = slot.propLine !== null && statCols && val > slot.propLine;
-                const cls = slot.propLine !== null && statCols ? (hit ? 'compare-game--hit' : 'compare-game--miss') : '';
+                const val = gameValue(g);
+                const cls = slot.propLine !== null && val !== null ? (val > slot.propLine ? 'compare-game--hit' : 'compare-game--miss') : '';
                 return `<div class="compare-game ${cls}">
                     <span class="compare-game__opp">${escHtml(g.opponent)}</span>
-                    <span class="compare-game__val">${statCols ? val.toFixed(1) : '—'}</span>
+                    <span class="compare-game__val">${val !== null ? val.toFixed(1) : '—'}</span>
                 </div>`;
             }).join('');
 
@@ -6179,7 +6171,7 @@ function fmtMarket(key) {
                             <div class="compare-player__market">${escHtml(slotA.marketKey.replace(/_/g, ' '))}</div>
                         </div>
                     </div>
-                    ${buildStatRows(dataA, slotA, statColsA)}
+                    ${buildStatRows(dataA, slotA)}
                 </div>
                 <div class="compare-divider"></div>
                 <div class="compare-player">
@@ -6190,7 +6182,7 @@ function fmtMarket(key) {
                             <div class="compare-player__market">${escHtml(slotB.marketKey.replace(/_/g, ' '))}</div>
                         </div>
                     </div>
-                    ${buildStatRows(dataB, slotB, statColsB)}
+                    ${buildStatRows(dataB, slotB)}
                 </div>
             </div>`;
     }

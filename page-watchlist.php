@@ -147,67 +147,59 @@ $is_loggedin = is_user_logged_in();
         }
 
         // ── Stat helpers ─────────────────────────────────────────────────────
-        const MARKET_STAT_COLS = {
-            player_points:                  ['PTS'],
-            player_rebounds:                ['REB'],
-            player_assists:                 ['AST'],
-            player_threes:                  ['3PT'],
-            player_blocks:                  ['BLK'],
-            player_steals:                  ['STL'],
-            player_blocks_steals:           ['BLK', 'STL'],
-            player_turnovers:               ['TO'],
-            player_field_goals:             ['FG'],
-            player_frees_made:              ['FT'],
-            player_points_rebounds_assists: ['PTS', 'REB', 'AST'],
-            player_points_rebounds:         ['PTS', 'REB'],
-            player_points_assists:          ['PTS', 'AST'],
-            player_rebounds_assists:        ['REB', 'AST'],
-            player_pass_yds:                ['YDS'],
-            player_pass_tds:                ['TD'],
-            player_pass_attempts:           ['ATT'],
-            player_pass_completions:        ['COMP'],
-            player_rush_yds:                ['YDS'],
-            player_rush_attempts:           ['CAR'],
-            player_reception_yds:           ['YDS'],
-            player_receptions:              ['REC'],
-            player_pass_interceptions:      ['INT'],
-            player_strikeouts:              ['K'],
-            player_hits:                    ['H'],
-            player_total_bases:             ['TB'],
-            player_home_runs:               ['HR'],
-            player_runs_scored:             ['R'],
-            player_rbis:                    ['RBI'],
-            player_shots_on_goal:           ['S'],   // ESPN skater stat is 'S', not 'SOG'
-            player_goals:                   ['G'],
-            player_assists_hockey:          ['A'],
-            player_points_hockey:           ['G', 'A'],
-        };
+        // Same normalisation as the server's statsight_normalize_name(): accents, punctuation and suffixes
+        // don't count, so "Nikola Jokić" matches "Nikola Jokic" and "Jabari Smith Jr." matches "Jabari Smith".
+        function normName(n) {
+            return String(n).normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+                .replace(/-/g, ' ').replace(/[^a-z0-9 ]/gi, '')
+                .replace(/\b(jr|sr|ii|iii|iv)\s*$/i, '').trim().toLowerCase();
+        }
 
-        // Look up a player's current stat total for a given market from the boxscore.
+        // Look up a player's current number for a market from the boxscore. The server works out each market's
+        // number ('_v'), so stats that share a label (NFL rushing vs receiving "YDS") don't get mixed up.
         // Returns null if no data, or a number.
         function getPlayerStat(eventId, player, marketKey) {
             const bs = gameBoxscores[eventId];
             if (!bs) return null;
-            // Try exact name match first, then partial.
             let stats = bs[player];
             if (!stats) {
-                const lc = player.toLowerCase();
-                const key = Object.keys(bs).find(k => k.toLowerCase() === lc || k.toLowerCase().includes(lc) || lc.includes(k.toLowerCase()));
+                const want = normName(player);
+                const key  = Object.keys(bs).find(k => normName(k) === want);
                 stats = key ? bs[key] : null;
             }
-            if (!stats) return null;
-            const mk   = (marketKey || '').replace(/_alternate$/, '');
-            const cols = MARKET_STAT_COLS[mk];
-            if (!cols) return null;
-            let total = 0;
-            for (const col of cols) {
-                const raw = stats[col];
-                if (raw == null || raw === '—') return null;
-                const num = parseFloat(String(raw).split(/[\/\-]/)[0]);
-                if (isNaN(num)) return null;
-                total += num;
-            }
-            return total;
+            const value = stats?._v?.[(marketKey || '').replace(/_alternate$/, '')];
+            return typeof value === 'number' ? value : null;
+        }
+
+        // game_start_time is stored as UTC "YYYY-MM-DD HH:MM:SS".
+        function parseUtc(gst) {
+            if (!gst) return null;
+            const d = new Date(String(gst).replace(' ', 'T') + 'Z');
+            return isNaN(d) ? null : d;
+        }
+        function hasStarted(gst) {
+            const d = parseUtc(gst);
+            return !!d && d.getTime() <= Date.now();
+        }
+        // "Sun, Oct 26 · 1:00 PM ET"
+        function fmtKickoff(gst) {
+            const d = parseUtc(gst);
+            if (!d) return '';
+            const tz   = { timeZone: 'America/New_York' };
+            const day  = d.toLocaleDateString('en-US', { ...tz, weekday: 'short', month: 'short', day: 'numeric' });
+            const time = d.toLocaleTimeString('en-US', { ...tz, hour: 'numeric', minute: '2-digit' });
+            return `${day} · ${time} ET`;
+        }
+
+        // CLV is stored in percentage points of implied probability (+6.9 = the closing price made this bet
+        // 6.9 points likelier than the price you took).
+        function parseClv(v) {
+            const n = parseFloat(v);
+            return v === null || v === undefined || v === '' || isNaN(n) ? null : n;
+        }
+        function clvBadge(clv) {
+            const mod = clv > 0 ? 'pos' : clv < 0 ? 'neg' : 'mid';
+            return `<span class="wl-clv wl-clv--${mod}" title="Closing line value: how much better (or worse) your price was than the closing line, in implied-probability points">${clv > 0 ? '+' : ''}${clv.toFixed(1)}% CLV</span>`;
         }
 
         // ── State ────────────────────────────────────────────────────────────
@@ -274,11 +266,13 @@ $is_loggedin = is_user_logged_in();
                     ? `${awayLogo}<span>${escHtml(awayName)}</span><span class="wl-game-header__sep">vs</span>${homeLogo}<span>${escHtml(homeName)}</span>`
                     : `${awayLogo}<span>${escHtml(awayName)}</span>`;
 
+                const kickoff     = fmtKickoff(group.props[0].game_start_time);
                 const groupHeader = `
                     <div class="wl-game-header">
                         <div class="wl-game-header__inner">
                             ${matchupHtml}
                             ${groupBadge}
+                            ${kickoff ? `<span class="wl-game-header__time">${escHtml(kickoff)}</span>` : ''}
                         </div>
                     </div>`;
 
@@ -355,10 +349,8 @@ $is_loggedin = is_user_logged_in();
                         : `<td class="wl-col-odds">${fmtOdds(p.odds)}${trendHtml}</td>`;
 
                     // CLV badge — shown for final games only.
-                    const clv    = p.clv !== null && p.clv !== undefined && p.clv !== '' ? parseInt(p.clv, 10) : null;
-                    const clvHtml = isFinal && clv !== null
-                        ? `<span class="wl-clv wl-clv--${clv > 0 ? 'pos' : clv < 0 ? 'neg' : 'mid'}" title="Closing Line Value">${clv > 0 ? '+' : ''}${clv} CLV</span>`
-                        : null;
+                    const clv    = parseClv(p.clv);
+                    const clvHtml = isFinal && clv !== null ? clvBadge(clv) : '';
 
                     const mainRow = `<tr class="wl-row${isSel ? ' wl-row--selected' : ''}${isFinal ? ' wl-row--ended' : ''}" data-id="${p.id}">
                         <td class="wl-col-check">
@@ -428,7 +420,7 @@ $is_loggedin = is_user_logged_in();
             const parlayHtml = parlays.map(parlay => {
                 const legs = (parlay.legs || []).map(l =>
                     `<li class="wl-parlay-leg">
-                        <span class="wl-parlay-leg__player">${escHtml(l.player)} <span class="wl-parlay-leg__line">${escHtml(l.line)}+</span> <span class="wl-parlay-leg__market">${escHtml(l.market_label)}</span></span>
+                        <span class="wl-parlay-leg__player">${escHtml(l.player)} <span class="wl-parlay-leg__line">${(l.direction || 'over') === 'under' ? 'Under' : 'Over'} ${escHtml(l.line)}</span> <span class="wl-parlay-leg__market">${escHtml(l.market_label)}</span></span>
                         <span class="wl-parlay-leg__odds">${fmtOdds(l.odds)}</span>
                         <span class="wl-parlay-leg__book">${escHtml(fmtBook(l.book))}</span>
                     </li>`
@@ -695,10 +687,11 @@ $is_loggedin = is_user_logged_in();
                 oddsHistoryMap  = wlJson.success ? (wlJson.data.odds_history || {}) : {};
                 parlays         = parlayJson.success ? parlayJson.data.parlays : [];
 
-                // Patch each prop's odds and all_books with latest values from the history table.
+                // Patch each prop's odds and all_books with latest values from the history table — only before the
+                // game starts. Once it's under way (or settled) the row shows the price you actually saved.
                 props = rawProps.map(p => {
                     const bookMap = liveOdds[p.id] || {};
-                    if (!Object.keys(bookMap).length) return p;
+                    if (!Object.keys(bookMap).length || p.result || hasStarted(p.game_start_time)) return p;
 
                     const updatedP = { ...p };
                     if (bookMap[p.book] != null) updatedP.odds = bookMap[p.book];
@@ -721,7 +714,7 @@ $is_loggedin = is_user_logged_in();
                     const seen = {};
                     const statusPayload = props
                         .filter(p => { if (seen[p.event_id]) return false; seen[p.event_id] = true; return true; })
-                        .map(p => ({ event_id: p.event_id, sport: p.sport, matchup: p.matchup, added_at: p.added_at, game_time: p.game_time ?? '' }));
+                        .map(p => ({ event_id: p.event_id, sport: p.sport, matchup: p.matchup }));
 
                     post('statsight_watchlist_game_status', { props: JSON.stringify(statusPayload) })
                         .then(json => {
@@ -803,10 +796,8 @@ $is_loggedin = is_user_logged_in();
                               : 'wl-result-badge--push';
             const resultLabel = row.result ? (row.result.charAt(0).toUpperCase() + row.result.slice(1)) : '—';
             const dir         = (row.direction || 'over').charAt(0).toUpperCase() + (row.direction || 'over').slice(1);
-            const clv         = row.clv !== null && row.clv !== undefined && row.clv !== '' ? parseInt(row.clv, 10) : null;
-            const clvHtml     = clv !== null
-                ? `<span class="wl-clv wl-clv--${clv > 0 ? 'pos' : clv < 0 ? 'neg' : 'mid'}">${clv > 0 ? '+' : ''}${clv} CLV</span>`
-                : '';
+            const clv         = parseClv(row.clv);
+            const clvHtml     = clv !== null ? clvBadge(clv) : '';
             const sport  = SPORT_LABELS[row.sport] || (row.sport || '').toUpperCase();
             const actual = row.actual_stat !== null && row.actual_stat !== undefined ? row.actual_stat : null;
 

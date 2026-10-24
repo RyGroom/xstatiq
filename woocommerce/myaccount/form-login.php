@@ -24,7 +24,11 @@ do_action( 'woocommerce_before_customer_login_form' );
 
         <?php if ( isset( $_GET['login_error'] ) ) : ?>
         <ul class="woocommerce-error" role="alert">
-            <li><?php esc_html_e( 'Incorrect email or password.', 'woocommerce' ); ?></li>
+            <?php if ( $_GET['login_error'] === 'pending' ) : ?>
+                <li>This account is scheduled for deletion. Use the reactivation link in the email we sent you to restore it, or contact support.</li>
+            <?php else : ?>
+                <li><?php esc_html_e( 'Incorrect email or password.', 'woocommerce' ); ?></li>
+            <?php endif; ?>
         </ul>
         <?php endif; ?>
         <?php wc_print_notices(); ?>
