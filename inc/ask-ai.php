@@ -57,6 +57,9 @@ Scope and conduct:
   strongest sport, NFL moderate, MLB less tested.
 - Edge and EV from the odds tools compare the best price with the other books' no-vig consensus. They measure price
   disagreement between books, not the model's opinion; say which one you are quoting.
+- Dates and times are US Eastern (the user message gives the current Eastern date and time). A game whose start
+  time has passed is underway or over and its pregame props are off the board: say the game has already started
+  rather than that lines haven't been posted, and treat "tonight" as the current Eastern evening.
 
 Style:
 - Lead with the answer or insight in one or two sentences, then up to 4 short bullet points with the key numbers.
@@ -160,6 +163,15 @@ function statsight_ask_team_abbr( string $sport ): array {
     global $wpdb;
     $rows = $wpdb->get_results( $wpdb->prepare( 'SELECT team_id, abbr FROM ' . statsight_ask_table( 'teams' ) . ' WHERE sport = %s', $sport ) );
     return array_column( array_map( fn( $r ) => [ (int) $r->team_id, $r->abbr ], $rows ?: [] ), 1, 0 );
+}
+
+/** A UTC timestamp as Eastern time, e.g. "Fri Oct 23, 9:43 PM ET" ('' if empty or unparseable). */
+function statsight_ask_et( ?string $utc ): string {
+    try {
+        return $utc ? ( new DateTime( $utc, new DateTimeZone( 'UTC' ) ) )->setTimezone( new DateTimeZone( 'America/New_York' ) )->format( 'D M j, g:i A' ) . ' ET' : '';
+    } catch ( Exception $e ) {
+        return '';
+    }
 }
 
 /** Decimal price => American odds string. */
@@ -290,7 +302,7 @@ function statsight_ask_slate( string $sport, ?int $top = 8 ): array {
          WHERE sport = %s AND game_date BETWEEN %s AND %s ORDER BY start_utc', $sport, $first, $last
     ) );
     foreach ( $rows ?: [] as $g ) {
-        $games[] = [ 'game' => ( $teams[ (int) $g->away_team_id ] ?? '?' ) . ' @ ' . ( $teams[ (int) $g->home_team_id ] ?? '?' ), 'start_utc' => $g->start_utc ];
+        $games[] = [ 'game' => ( $teams[ (int) $g->away_team_id ] ?? '?' ) . ' @ ' . ( $teams[ (int) $g->home_team_id ] ?? '?' ), 'start_et' => statsight_ask_et( $g->start_utc ) ];
         foreach ( json_decode( $g->outs ?: '{}', true ) ?: [] as $tid => $list ) {
             foreach ( $list as $o ) {
                 if ( preg_match( '/^(out|doubtful)/i', $o['status'] ?? '' ) ) {
@@ -455,7 +467,7 @@ function statsight_ask_odds_board( string $player, string $sport ): array {
                                                     'under' => isset( $o['under'] ) ? statsight_fmt_odds( (int) $o['under'] ) : null ];
         }
         $out[] = [ 'player' => $r['player'], 'market' => $r['market'], 'line' => $r['line'], 'game' => $r['matchup'],
-                   'start_utc' => $r['start'], 'prices' => $prices,
+                   'start_et' => statsight_ask_et( $r['start'] ), 'prices' => $prices,
                    'over' => statsight_ask_side_value( $r, 'over' ), 'under' => statsight_ask_side_value( $r, 'under' ) ];
     }
     return [ 'props' => $out, 'note' => 'Edge = consensus no-vig probability minus the best price\'s implied probability (percentage points); '
@@ -551,7 +563,8 @@ function statsight_ask_answer( string $question, string $sport = '' ): array {
         return [ 'ok' => false, 'error' => "The AI analyst isn't set up yet." ];
     }
     $hint     = in_array( $sport, STATSIGHT_ASK_ENGINE, true ) ? ' (The user is looking at the ' . strtoupper( $sport ) . ' tab.)' : '';
-    $today    = 'Today is ' . wp_date( 'l, F j, Y' ) . '.';
+    // Sports schedules run on Eastern time; the site's own timezone may be UTC (a day ahead after 8 PM ET).
+    $today    = 'Right now it is ' . ( new DateTime( 'now', new DateTimeZone( 'America/New_York' ) ) )->format( 'l, F j, Y, g:i A' ) . ' Eastern.';
     $messages = [ [ 'role' => 'user', 'content' => "$today$hint\n\nQuestion: $question" ] ];
     $used     = [];
 
