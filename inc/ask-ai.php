@@ -59,9 +59,14 @@ Scope and conduct:
 - Edge and EV from the odds tools compare the best price with the other books' no-vig consensus. They measure price
   disagreement between books, not the model's opinion; say which one you are quoting.
 - When the model holds back a market (anytime TD, goal scorers and the like) or the question asks who is most
-  likely to do something, still answer from the market with market_board: name the favourite per game with its
-  fair probability and best price, and say it's the betting market's view, not a model pick. Don't refuse just
-  because the model has no pick, and don't treat "who should score" as a request for a guarantee.
+  likely to do something, still answer: don't refuse because the model has no pick, and don't treat "who should
+  score" as a request for a guarantee.
+- NFL touchdowns: use td_matchups and give a real prediction per game, explained by the matchup - the team's
+  implied points and TD form, the opponent's defense overall and against that position, the player's snaps,
+  targets and share of the team's TDs, and injuries. Rank by the estimate and quote it with the best price. Call
+  out where the stats disagree with the market (stats % well above or below market %) as a lean, and say
+  in a few words that touchdowns are high-variance and this estimate leans on the market. For other sports' scorer
+  markets use market_board and say it's the market's view.
 - Live games: whenever a question is about a game in progress or tonight's game once it may have tipped ("right
   now", "so far", "currently", "will he finish with", "is he on pace"), call live_game before answering; never say
   you can't do live games. For basketball it returns the score and margin, the clock, the game script (blowout,
@@ -184,6 +189,15 @@ function statsight_ask_tools(): array {
             'game'     => [ 'type' => 'string', 'description' => 'Optional team name to limit to one game' ],
             'per_game' => [ 'type' => 'integer', 'description' => 'Players per game, 1-10 (default 5)' ],
         ], [ 'sport', 'market' ] ),
+        $tool( 'td_matchups', 'NFL touchdown analysis for upcoming games: per team the implied points from the spread '
+            . 'and total, recent offensive TDs and points, the opponent\'s TDs allowed overall and to each position vs the '
+            . 'league; per player injury status, snap %, targets, target share, carries, TDs and share of team TDs, a '
+            . 'stats-only TD chance, the market\'s chance, and a blended estimate. Use for "who will score a TD", "which '
+            . 'TE scores", "best TD bets" in the NFL.', [
+            'position' => [ 'type' => 'string', 'description' => 'Optional: RB, WR, TE or QB (default RB, WR and TE)' ],
+            'game'     => [ 'type' => 'string', 'description' => 'Optional team name or abbreviation to limit to one game' ],
+            'per_team' => [ 'type' => 'integer', 'description' => 'Players per team, 1-6 (default 3)' ],
+        ], [] ),
     ];
 }
 
@@ -707,6 +721,232 @@ function statsight_ask_market_board( string $sport, string $market, ?string $pos
                      . 'Players ranked by it within each game.' . ( $unknown ? " $unknown players skipped (position unknown)." : '' ) ];
 }
 
+/**
+ * NFL touchdown matchup settings. A stats-only estimate (implied team points x the player's shrunk share of team TDs x
+ * the opponent's TDs allowed to his position) tested worse than the market on 2024-25 anytime TD prices (log loss
+ * 0.503 vs 0.475 over ~10,400 player-games), so the estimate leans on the market and the stats explain it.
+ */
+const STATSIGHT_ASK_TD = [
+    'days'    => 420,    // look-back for player and team games (spans the off-season)
+    'games'   => 10,     // player's recent games
+    'k'       => 8.0,    // TDs of shrinkage toward the share his opportunities imply
+    'c'       => 20.0,   // TDs of shrinkage on the opponent-vs-position factor
+    'team'    => 8,      // team games for offense / defense form
+    'w_model' => 0.15,   // model weight in the logit blend with the market (fit on 2023)
+    'margin'  => 1.15,   // anytime TD books' one-sided margin (fit on 2023-25 prices)
+];
+
+/**
+ * Touchdown matchups for upcoming NFL games: per team the implied points, offensive TD form, the opponent's TDs
+ * allowed overall and to the position, and per player usage, TD share, injury status, the stats-only chance, the
+ * market's chance and a blended estimate.
+ */
+function statsight_ask_td_matchups( ?string $position = null, ?string $game = null, ?int $per_team = 3 ): array {
+    global $wpdb;
+    $cfg      = STATSIGHT_ASK_TD;
+    $per_team = max( 1, min( (int) ( $per_team ?: 3 ), 6 ) );
+    $want_pos = $position ? [ strtoupper( trim( $position ) ) ] : [ 'RB', 'WR', 'TE' ];
+    $teams    = $wpdb->get_results( 'SELECT team_id, abbr, name FROM ' . statsight_ask_table( 'teams' ) . " WHERE sport = 'nfl'", OBJECT_K );
+    $slate    = $wpdb->get_results(
+        'SELECT s.game_id, s.start_utc, s.home_team_id h, s.away_team_id a, s.outs, o.spread_home, o.total
+         FROM ' . statsight_ask_table( 'slate_games' ) . ' s
+         LEFT JOIN ' . statsight_ask_table( 'game_odds' ) . ' o ON o.game_id = s.game_id AND o.fetched_at = (
+             SELECT MAX(fetched_at) FROM ' . statsight_ask_table( 'game_odds' ) . " WHERE game_id = s.game_id )
+         WHERE s.sport = 'nfl' AND s.start_utc > UTC_TIMESTAMP() AND s.start_utc < UTC_TIMESTAMP() + INTERVAL 8 DAY
+         ORDER BY s.start_utc"
+    );
+    if ( $game ) {
+        $g     = statsight_normalise_team_name( $game );
+        $slate = array_filter( $slate ?: [], function ( $s ) use ( $teams, $g ) {
+            foreach ( [ $s->h, $s->a ] as $t ) {
+                $n = statsight_normalise_team_name( ( $teams[ $t ]->name ?? '' ) . ' ' . ( $teams[ $t ]->abbr ?? '' ) );
+                if ( $n !== '' && ( str_contains( $n, $g ) || in_array( $g, explode( ' ', $n ), true ) ) ) {
+                    return true;
+                }
+            }
+            return false;
+        } );
+    }
+    if ( ! $slate ) {
+        return [ 'games' => [], 'note' => $game ? "No upcoming NFL game matching '$game'." : 'No upcoming NFL games in the next week.' ];
+    }
+
+    // Player games over the look-back, with positions and snap shares.
+    $rows = $wpdb->get_results( $wpdb->prepare(
+        'SELECT p.game_id, p.player_id, p.team_id, p.targets, p.rush_att, p.rush_td + p.rec_td td, g.game_date, g.home_team_id h,
+                g.away_team_id a, g.home_score hs, g.away_score aws, pl.name, pl.position pos, u.snap_pct, u.target_share
+         FROM ' . statsight_ask_table( 'nfl_player_games' ) . ' p
+         JOIN ' . statsight_ask_table( 'games' ) . ' g ON g.game_id = p.game_id
+         JOIN ' . statsight_ask_table( 'players' ) . ' pl ON pl.player_id = p.player_id
+         LEFT JOIN ' . statsight_ask_table( 'nfl_usage' ) . ' u ON u.game_id = p.game_id AND u.player_id = p.player_id
+         WHERE g.sport = %s AND g.home_score IS NOT NULL AND g.game_date >= %s
+         ORDER BY g.game_date',
+        'nfl', gmdate( 'Y-m-d', time() - $cfg['days'] * DAY_IN_SECONDS )
+    ) );
+    $tg = $by_player = $team_dates = [];                  // team-game totals, player rows, team => [game_id => date]
+    foreach ( $rows ?: [] as $r ) {
+        $opp = (int) ( $r->team_id == $r->h ? $r->a : $r->h );
+        $t   = &$tg[ $r->game_id ][ $r->team_id ];
+        $t['tds']  = ( $t['tds'] ?? 0 ) + (int) $r->td;
+        $t['opp']  = ( $t['opp'] ?? 0 ) + (int) $r->targets + (int) $r->rush_att;
+        $t['ptd'][ $r->pos ] = ( $t['ptd'][ $r->pos ] ?? 0 ) + (int) $r->td;
+        $t['pts']  = (int) ( $r->team_id == $r->h ? $r->hs : $r->aws );
+        $t['vs']   = $opp;
+        unset( $t );
+        $by_player[ $r->player_id ][] = $r;
+        $team_dates[ $r->team_id ][ $r->game_id ] = $r->game_date;
+    }
+    $league = [ 'tds' => 0, 'pts' => 0, 'opp' => 0, 'ptd' => [], 'popp' => [] ];
+    foreach ( $rows ?: [] as $r ) {
+        $league['ptd'][ $r->pos ]  = ( $league['ptd'][ $r->pos ] ?? 0 ) + (int) $r->td;
+        $league['popp'][ $r->pos ] = ( $league['popp'][ $r->pos ] ?? 0 ) + (int) $r->targets + (int) $r->rush_att;
+    }
+    foreach ( $tg as $teams_in_game ) {
+        foreach ( $teams_in_game as $t ) {
+            $league['tds'] += $t['tds'];
+            $league['pts'] += $t['pts'];
+            $league['opp'] += $t['opp'];
+        }
+    }
+    if ( ! $league['tds'] ) {
+        return [ 'games' => [], 'note' => 'No NFL game logs loaded.' ];
+    }
+    $td_per_pt = $league['tds'] / max( 1, $league['pts'] );
+    $share_of  = fn( string $p ): float => max( 0.01, ( $league['ptd'][ $p ] ?? 0 ) / $league['tds'] );
+    $mult_of   = fn( string $p ): float => $share_of( $p ) / max( 1e-6, ( $league['popp'][ $p ] ?? 0 ) / max( 1, $league['opp'] ) );
+
+    // A team's last N games: offensive TDs and points per game, TDs allowed per game overall and by position.
+    $form = function ( int $team ) use ( $tg, $team_dates, $cfg ): array {
+        $dates = $team_dates[ $team ] ?? [];
+        arsort( $dates );
+        $f = [ 'n' => 0, 'tds' => 0, 'pts' => 0, 'allowed' => 0, 'allowed_pts' => 0, 'allowed_pos' => [] ];
+        foreach ( array_keys( $dates ) as $gid ) {
+            $mine = $tg[ $gid ][ $team ] ?? null;
+            $them = $mine ? ( $tg[ $gid ][ $mine['vs'] ] ?? null ) : null;
+            if ( ! $them ) {
+                continue;
+            }
+            $f['tds'] += $mine['tds'];
+            $f['pts'] += $mine['pts'];
+            $f['allowed'] += $them['tds'];
+            $f['allowed_pts'] += $them['pts'];
+            foreach ( $them['ptd'] ?? [] as $p => $v ) {
+                $f['allowed_pos'][ $p ] = ( $f['allowed_pos'][ $p ] ?? 0 ) + $v;
+            }
+            if ( ++$f['n'] >= $cfg['team'] ) {
+                break;
+            }
+        }
+        return $f;
+    };
+
+    // Market: consensus anytime TD probability by player from the cached odds.
+    $market = [];
+    foreach ( statsight_ask_prop_rows( STATSIGHT_ASK_ODDS_SPORTS['nfl'] ) as $r ) {
+        if ( $r['key'] !== 'player_anytime_td' ) {
+            continue;
+        }
+        $impl = [];
+        foreach ( $r['odds'] as $o ) {
+            if ( isset( $o['over'] ) ) {
+                $impl[] = ( $o['over'] > 0 ? 100 / ( $o['over'] + 100 ) : abs( $o['over'] ) / ( abs( $o['over'] ) + 100 ) );
+            }
+        }
+        if ( $impl ) {
+            sort( $impl );
+            $n = count( $impl );
+            $med = $n % 2 ? $impl[ intdiv( $n, 2 ) ] : ( $impl[ $n / 2 - 1 ] + $impl[ $n / 2 ] ) / 2;
+            $market[ statsight_ask_player_key( $r['player'] ) ] = [ min( 0.95, $med / $cfg['margin'] ), statsight_fmt_odds( max( array_column( $r['odds'], 'over' ) ) ) ];
+        }
+    }
+    $logit = fn( float $p ): float => log( $p / ( 1 - $p ) );
+
+    $out = [];
+    foreach ( $slate as $s ) {
+        $statuses = [];
+        foreach ( json_decode( $s->outs ?: '{}', true ) ?: [] as $list ) {
+            foreach ( $list as $o ) {
+                $statuses[ (int) ( $o['player_id'] ?? 0 ) ] = $o['status'] ?? '';
+            }
+        }
+        $has_line = $s->total !== null;
+        $sides    = [];
+        foreach ( [ (int) $s->a => (int) $s->h, (int) $s->h => (int) $s->a ] as $team => $opp ) {
+            $implied = $has_line ? $s->total / 2 + ( $team == $s->h ? -1 : 1 ) * $s->spread_home / 2 : null;
+            $mine    = $form( $team );
+            $theirs  = $form( $opp );
+            $exp_tds = ( $implied ?? ( $mine['n'] ? $mine['pts'] / $mine['n'] : 21 ) ) * $td_per_pt;
+
+            $players = [];
+            foreach ( $by_player as $pid => $list ) {
+                $last = end( $list );
+                if ( (int) $last->team_id !== $team || ! in_array( $last->pos, $want_pos, true )
+                     || preg_match( '/^(out|doubtful|injured reserve)/i', $statuses[ $pid ] ?? '' ) ) {
+                    continue;
+                }
+                $recent = array_slice( $list, -$cfg['games'] );
+                $td = $opp_n = $team_td = $team_opp = $tgt = $ru = 0;
+                $snaps = $tshare = [];
+                foreach ( $recent as $r ) {
+                    $td       += (int) $r->td;
+                    $tgt      += (int) $r->targets;
+                    $ru       += (int) $r->rush_att;
+                    $team_td  += $tg[ $r->game_id ][ $r->team_id ]['tds'] ?? 0;
+                    $team_opp += $tg[ $r->game_id ][ $r->team_id ]['opp'] ?? 0;
+                    if ( $r->snap_pct !== null ) {
+                        $snaps[] = (float) $r->snap_pct;
+                    }
+                    if ( $r->target_share !== null ) {
+                        $tshare[] = (float) $r->target_share;
+                    }
+                }
+                $n       = count( $recent );
+                $prior   = ( $tgt + $ru ) / max( 1, $team_opp ) * $mult_of( $last->pos );
+                $share   = ( $td + $cfg['k'] * $prior ) / ( $team_td + $cfg['k'] );
+                $allowed = $theirs['allowed_pos'][ $last->pos ] ?? 0;
+                $vs_pos  = ( ( $allowed + $cfg['c'] * $share_of( $last->pos ) ) / ( $theirs['allowed'] + $cfg['c'] ) ) / $share_of( $last->pos );
+                $p_model = max( 0.005, min( 0.95, 1 - exp( -$exp_tds * $share * $vs_pos ) ) );
+                $mk      = $market[ statsight_ask_player_key( $last->name ) ] ?? null;
+                $p_est   = $mk ? 1 / ( 1 + exp( -( ( 1 - $cfg['w_model'] ) * $logit( $mk[0] ) + $cfg['w_model'] * $logit( $p_model ) ) ) ) : $p_model;
+                $snap    = $snaps ? round( array_sum( $snaps ) / count( $snaps ) * 100 ) . '% snaps, ' : '';
+                $tsh     = $tshare ? ' (' . round( array_sum( $tshare ) / count( $tshare ) * 100 ) . '% share)' : '';
+                $players[] = [
+                    'est'    => $p_est,
+                    'priced' => (bool) $mk,
+                    'row'    => "{$last->name} {$last->pos}" . ( isset( $statuses[ $pid ] ) && $statuses[ $pid ] !== 'Active' ? " [{$statuses[ $pid ]}]" : '' )
+                           . " | {$snap}" . round( $tgt / max( 1, $n ), 1 ) . " tgt/g$tsh, " . round( $ru / max( 1, $n ), 1 ) . " car/g | $td TD of team's $team_td in $n g"
+                           . ' | stats ' . round( $p_model * 100 ) . '%, market ' . ( $mk ? round( $mk[0] * 100 ) . '%' : 'n/a' )
+                           . ' | estimate ' . round( $p_est * 100 ) . '%' . ( $mk ? ", best {$mk[1]}" : '' ),
+                ];
+            }
+            if ( array_filter( array_column( $players, 'priced' ) ) ) {   // books post every likely player: unpriced ones probably sit
+                $players = array_filter( $players, fn( $x ) => $x['priced'] );
+            }
+            usort( $players, fn( $x, $y ) => $y['est'] <=> $x['est'] );
+            $abbr    = $teams[ $team ]->abbr ?? $team;
+            $vs      = $teams[ $opp ]->abbr ?? $opp;
+            $sides[] = [
+                'team'    => $abbr . ( $implied !== null ? ' implied ' . round( $implied, 1 ) . ' pts' : '' ) . ', expected offensive TDs ' . round( $exp_tds, 1 )
+                           . ( $mine['n'] ? "; last {$mine['n']}: " . round( $mine['pts'] / $mine['n'], 1 ) . ' pts, ' . round( $mine['tds'] / $mine['n'], 1 ) . ' TDs/g' : '' ),
+                'defense' => $theirs['n'] ? "$vs last {$theirs['n']}: allowed " . round( $theirs['allowed_pts'] / $theirs['n'], 1 ) . ' pts, '
+                           . round( $theirs['allowed'] / $theirs['n'], 1 ) . ' TDs/g; to ' . implode( ', ', array_map( fn( $p ) => "$p " . ( $theirs['allowed_pos'][ $p ] ?? 0 )
+                           . ' (' . round( ( $theirs['allowed_pos'][ $p ] ?? 0 ) / max( 1, $theirs['allowed'] ) * 100 ) . '% vs league ' . round( $share_of( $p ) * 100 ) . '%)', $want_pos ) ) : null,
+                'players' => array_column( array_slice( $players, 0, $per_team ), 'row' ),
+            ];
+        }
+        $out[] = [
+            'game'     => ( $teams[ $s->a ]->name ?? '?' ) . ' @ ' . ( $teams[ $s->h ]->name ?? '?' ),
+            'start_et' => statsight_ask_et( $s->start_utc ),
+            'line'     => $has_line ? [ 'home_spread' => (float) $s->spread_home, 'total' => (float) $s->total ] : null,
+            'teams'    => $sides,
+        ];
+    }
+    return [ 'games' => array_values( $out ), 'note' => 'estimate blends the market (85%) with the stats-only number (15%); the '
+             . 'stats-only number alone tested worse than the market, so lead with the estimate and use the stats to explain '
+             . 'it. Players ruled out, doubtful or on IR, or not priced by the books, are left out. Last ' . $cfg['games'] . ' games per player, last '
+             . $cfg['team'] . ' per team.' ];
+}
+
 /** Basketball clocks for minute-based live projections. */
 const STATSIGHT_ASK_CLOCKS = [
     'nba'   => [ 'periods' => 4, 'len' => 12, 'ot' => 5 ],
@@ -1019,6 +1259,7 @@ function statsight_ask_run_tool( string $name, array $args ): array {
         'odds_board'          => 'statsight_ask_odds_board',
         'best_edges'          => 'statsight_ask_best_edges',
         'market_board'        => 'statsight_ask_market_board',
+        'td_matchups'         => 'statsight_ask_td_matchups',
         'live_game'           => 'statsight_ask_live_game',
     ];
     if ( ! isset( $funcs[ $name ] ) ) {
@@ -1029,7 +1270,7 @@ function statsight_ask_run_tool( string $name, array $args ): array {
         return [ wp_json_encode( [ 'error' => 'Sport must be one of: ' . implode( ', ', $sports ) . '.' ] ), true ];
     }
     try {
-        return [ mb_substr( (string) wp_json_encode( call_user_func_array( $funcs[ $name ], $args ) ), 0, 12000 ), false ];
+        return [ mb_substr( (string) wp_json_encode( call_user_func_array( $funcs[ $name ], $args ) ), 0, $name === 'td_matchups' ? 24000 : 12000 ), false ];
     } catch ( Throwable $e ) {                     // a bad lookup shouldn't end the answer
         return [ wp_json_encode( [ 'error' => 'lookup failed: ' . get_class( $e ) ] ), true ];
     }
