@@ -58,6 +58,10 @@ Scope and conduct:
   strongest sport, NFL moderate, MLB less tested.
 - Edge and EV from the odds tools compare the best price with the other books' no-vig consensus. They measure price
   disagreement between books, not the model's opinion; say which one you are quoting.
+- When the model holds back a market (anytime TD, goal scorers and the like) or the question asks who is most
+  likely to do something, still answer from the market with market_board: name the favourite per game with its
+  fair probability and best price, and say it's the betting market's view, not a model pick. Don't refuse just
+  because the model has no pick, and don't treat "who should score" as a request for a guarantee.
 - Live games: whenever a question is about a game in progress or tonight's game once it may have tipped ("right
   now", "so far", "currently", "will he finish with", "is he on pace"), call live_game before answering; never say
   you can't do live games. For basketball it returns the score and margin, the clock, the game script (blowout,
@@ -169,6 +173,17 @@ function statsight_ask_tools(): array {
             'sport' => $odds,
             'top'   => [ 'type' => 'integer', 'description' => '1-15 (default 8)' ],
         ], [ 'sport' ] ),
+        $tool( 'market_board', 'One prop market across the whole slate, game by game, players ranked by the books\' '
+            . 'consensus no-vig probability of the over/yes, with the best price. Use for "who will score", "which tight '
+            . 'end scores in each game", "best anytime goalscorer tonight", "who has the most receptions upside". '
+            . 'Filter by position (ESPN abbreviations: QB, RB, WR, TE, DST; C, LW, RW, D; G, F; etc.) and/or one team.', [
+            'sport'    => $odds,
+            'market'   => [ 'type' => 'string', 'description' => 'Market name or key, e.g. "anytime td", "player_receptions", '
+                                                               . '"goal scorer", "first td". If unclear, the reply lists the markets.' ],
+            'position' => [ 'type' => 'string', 'description' => 'Optional position abbreviation' ],
+            'game'     => [ 'type' => 'string', 'description' => 'Optional team name to limit to one game' ],
+            'per_game' => [ 'type' => 'integer', 'description' => 'Players per game, 1-10 (default 5)' ],
+        ], [ 'sport', 'market' ] ),
     ];
 }
 
@@ -418,7 +433,7 @@ function statsight_ask_model_track_record( string $sport ): array {
  * Every player prop on the sport's current slate from the cached props payloads (no Odds API calls): one row per
  * player, market and main line, limited to the user's selected books.
  *
- * @return array<int, array{player: string, market: string, line: string, matchup: string, start: string, books: array, odds: array}>
+ * @return array<int, array{player: string, key: string, market: string, line: string, matchup: string, teams: array, start: string, books: array, odds: array}>
  */
 function statsight_ask_prop_rows( string $sport_key ): array {
     $events = statsight_get_events_for_sport( $sport_key )['days'] ?? [];
@@ -444,9 +459,11 @@ function statsight_ask_prop_rows( string $sport_key ): array {
                     if ( $odds ) {
                         $rows[] = [
                             'player'  => $player,
+                            'key'     => $mk,
                             'market'  => $payload['market_labels'][ $mk ] ?? $mk,
                             'line'    => $lk === 'yn' ? 'Yes' : (string) $lk,
                             'matchup' => ( $event['away_team'] ?? '' ) . ' @ ' . ( $event['home_team'] ?? '' ),
+                            'teams'   => [ $event['away_team'] ?? '', $event['home_team'] ?? '' ],
                             'start'   => $event['commence_time'] ?? '',
                             'books'   => $payload['books'] ?? [],
                             'odds'    => $odds,
@@ -511,6 +528,183 @@ function statsight_ask_best_edges( string $sport, ?int $top = 8 ): array {
     }
     usort( $edges, fn( $a, $b ) => $b['edge_pct'] <=> $a['edge_pct'] );
     return [ 'edges' => array_slice( $edges, 0, $top ), 'note' => 'Edge and EV measure price disagreement between books, not the model.' ];
+}
+
+/** A player name for matching across sources: ASCII, lowercase, no punctuation or Jr./Sr./II-IV suffix. */
+function statsight_ask_player_key( string $name ): string {
+    return preg_replace( '/ (jr|sr|ii|iii|iv|v)$/', '', statsight_normalise_team_name( $name ) );
+}
+
+/**
+ * Normalised player name => ESPN position (e.g. "TE", "WR", "C") for the given teams (Odds API names). Rosters are
+ * fetched in parallel and cached per team for 12 hours.
+ */
+function statsight_ask_positions( string $sport_key, array $teams ): array {
+    $path = statsight_espn_sport_path( $sport_key );
+    if ( ! $path || ! $teams ) {
+        return [];
+    }
+    $base   = 'https://site.api.espn.com/apis/site/v2/sports/' . $path['sport'] . '/' . $path['league'] . '/teams';
+    $ids_tk = 'statsight_ask_teamids_' . $sport_key;
+    $ids    = get_transient( $ids_tk );
+    if ( ! is_array( $ids ) ) {
+        $resp = wp_remote_get( $base . '?limit=500', [ 'timeout' => 10 ] );
+        $ids  = [];
+        foreach ( json_decode( wp_remote_retrieve_body( $resp ) ?: '[]', true )['sports'][0]['leagues'][0]['teams'] ?? [] as $t ) {
+            $ids[ statsight_normalise_team_name( $t['team']['displayName'] ?? '' ) ] = (string) ( $t['team']['id'] ?? '' );
+        }
+        if ( $ids ) {
+            set_transient( $ids_tk, $ids, DAY_IN_SECONDS );
+        }
+    }
+
+    $out  = [];
+    $need = [];
+    foreach ( array_unique( $teams ) as $team ) {
+        $norm = statsight_normalise_team_name( $team );
+        $id   = $ids[ $norm ] ?? null;
+        if ( ! $id ) {                                              // "LA Rams" vs "Los Angeles Rams" and the like
+            foreach ( $ids as $n => $i ) {
+                if ( str_contains( $n, $norm ) || str_contains( $norm, $n ) ) {
+                    $id = $i;
+                    break;
+                }
+            }
+        }
+        if ( ! $id ) {
+            continue;
+        }
+        $cached = get_transient( "statsight_ask_pos_{$sport_key}_{$id}" );
+        if ( is_array( $cached ) ) {
+            $out += $cached;
+        } else {
+            $need[ $id ] = [ 'url' => "$base/$id/roster", 'type' => 'GET', 'headers' => [], 'data' => [] ];
+        }
+    }
+    if ( $need ) {
+        $responses = WpOrg\Requests\Requests::request_multiple( $need, [ 'timeout' => 10 ] );
+        foreach ( $responses as $id => $resp ) {
+            if ( ! $resp instanceof WpOrg\Requests\Response || $resp->status_code !== 200 ) {
+                continue;
+            }
+            $athletes = json_decode( $resp->body, true )['athletes'] ?? [];
+            if ( $athletes && isset( $athletes[0]['items'] ) ) {      // grouped by position in some sports
+                $athletes = array_merge( ...array_column( $athletes, 'items' ) );
+            }
+            $map = [];
+            foreach ( $athletes as $a ) {
+                $pos = $a['position']['abbreviation'] ?? null;
+                if ( $pos && ! empty( $a['fullName'] ) ) {
+                    $map[ statsight_ask_player_key( $a['fullName'] ) ] = $pos;
+                }
+            }
+            set_transient( "statsight_ask_pos_{$sport_key}_{$id}", $map, 12 * HOUR_IN_SECONDS );
+            $out += $map;
+        }
+    }
+    return $out;
+}
+
+/**
+ * One prop market across the slate, game by game, with players ranked by the market's fair (no-vig) probability of
+ * the over / "yes" side. Answers "who's most likely to score", "which TE should score", "best anytime goalscorer".
+ */
+function statsight_ask_market_board( string $sport, string $market, ?string $position = null, ?string $game = null, ?int $per_game = 5 ): array {
+    $sport_key = STATSIGHT_ASK_ODDS_SPORTS[ $sport ];
+    $per_game  = max( 1, min( (int) ( $per_game ?: 5 ), 10 ) );
+    $want      = statsight_normalise_team_name( str_replace( '_', ' ', $market ) );
+    $rows      = statsight_ask_prop_rows( $sport_key );
+    $markets   = [];
+    foreach ( $rows as $r ) {
+        $markets[ $r['key'] ] = $r['market'];
+    }
+    $match = array_filter( $markets, fn( $label, $key ) => $want !== '' && (
+        str_contains( statsight_normalise_team_name( str_replace( '_', ' ', $key ) ), $want )
+        || str_contains( statsight_normalise_team_name( $label ), $want ) ), ARRAY_FILTER_USE_BOTH );
+    if ( count( $match ) !== 1 ) {
+        $exact = array_filter( $match, fn( $label ) => statsight_normalise_team_name( $label ) === $want );
+        $match = count( $exact ) === 1 ? $exact : $match;
+    }
+    if ( ! $markets ) {
+        return [ 'games' => [], 'note' => 'No player props loaded for the current ' . strtoupper( $sport ) . ' slate yet.' ];
+    }
+    if ( count( $match ) !== 1 ) {
+        return [ 'games' => [], 'note' => ( $match ? "'$market' matches several markets; pass one of them." : "No '$market' market on the current "
+                 . strtoupper( $sport ) . ' slate.' ) . ' Markets available now: ' . implode( '; ', array_map(
+                 fn( $k, $l ) => "$l ($k)", array_keys( $match ?: $markets ), $match ?: $markets ) ) ];
+    }
+    $key  = array_key_first( $match );
+    $rows = array_filter( $rows, fn( $r ) => $r['key'] === $key );
+    if ( $game ) {
+        $g    = statsight_normalise_team_name( $game );
+        $rows = array_filter( $rows, function ( $r ) use ( $g ) {
+            foreach ( $r['teams'] as $t ) {
+                $t = statsight_normalise_team_name( $t );
+                if ( $t !== '' && ( str_contains( $t, $g ) || str_contains( $g, $t ) || in_array( $g, explode( ' ', $t ), true ) ) ) {
+                    return true;
+                }
+            }
+            return false;
+        } );
+        if ( ! $rows ) {
+            return [ 'games' => [], 'note' => "No game matching '$game' with this market on the current slate." ];
+        }
+    }
+
+    $pos     = $position ? strtoupper( trim( $position ) ) : null;
+    $posmap  = $pos ? statsight_ask_positions( $sport_key, array_merge( ...array_column( array_values( $rows ), 'teams' ) ) ) : [];
+    $to_impl = fn( int $o ): float => $o > 0 ? 100 / ( $o + 100 ) : abs( $o ) / ( abs( $o ) + 100 );
+    $games   = [];
+    $unknown = 0;
+    foreach ( $rows as $r ) {
+        if ( $pos ) {
+            $p = preg_match( '~ (d/st|defense)$~i', $r['player'] ) ? 'DST' : ( $posmap[ statsight_ask_player_key( $r['player'] ) ] ?? null );
+            if ( $p === null ) {
+                $unknown++;
+                continue;
+            }
+            if ( $p !== $pos ) {
+                continue;
+            }
+        }
+        $v = statsight_calc_value( $r['odds'], 'over' );
+        if ( $v ) {
+            $fair = $v['fair_prob'];
+            $best = $v['best_odds'];
+            $bk   = $v['best_bk'];
+        } else {                                                    // one book: its price less a typical margin
+            $prices = array_filter( array_map( fn( $o ) => isset( $o['over'] ) ? (int) $o['over'] : null, $r['odds'] ), 'is_int' );
+            if ( ! $prices ) {
+                continue;
+            }
+            $best = max( $prices );
+            $bk   = (string) array_search( $best, $prices, true );
+            $fair = $to_impl( $best ) / STATSIGHT_ONE_SIDED_MARGIN;
+        }
+        $games[ $r['matchup'] ]['start'] = $r['start'];
+        $games[ $r['matchup'] ]['players'][] = [
+            'player'        => $r['player'],
+            'line'          => $r['line'],
+            'fair_prob_pct' => round( $fair * 100, 1 ),
+            'fair_price'    => statsight_ask_prob_american( $fair ),
+            'best_price'    => statsight_fmt_odds( $best ),
+            'best_book'     => $r['books'][ $bk ] ?? $bk,
+            'books_quoting' => count( $r['odds'] ),
+        ];
+    }
+    if ( ! $games ) {
+        return [ 'games' => [], 'note' => 'No ' . $match[ $key ] . ' prices' . ( $pos ? " for position $pos" : '' ) . ' on the current slate'
+                 . ( $unknown ? " ($unknown players' positions couldn't be looked up)" : '' ) . '.' ];
+    }
+    uasort( $games, fn( $a, $b ) => strcmp( $a['start'], $b['start'] ) );
+    $out = [];
+    foreach ( $games as $matchup => $g ) {
+        usort( $g['players'], fn( $a, $b ) => $b['fair_prob_pct'] <=> $a['fair_prob_pct'] );
+        $out[] = [ 'game' => $matchup, 'start_et' => statsight_ask_et( $g['start'] ), 'players' => array_slice( $g['players'], 0, $per_game ) ];
+    }
+    return [ 'market' => $match[ $key ], 'position' => $pos, 'games' => $out,
+             'note' => 'fair_prob_pct = the books\' consensus no-vig chance of the over/yes; this is the market\'s view, not a model pick. '
+                     . 'Players ranked by it within each game.' . ( $unknown ? " $unknown players skipped (position unknown)." : '' ) ];
 }
 
 /** Basketball clocks for minute-based live projections. */
@@ -824,12 +1018,13 @@ function statsight_ask_run_tool( string $name, array $args ): array {
         'model_track_record'  => 'statsight_ask_model_track_record',
         'odds_board'          => 'statsight_ask_odds_board',
         'best_edges'          => 'statsight_ask_best_edges',
+        'market_board'        => 'statsight_ask_market_board',
         'live_game'           => 'statsight_ask_live_game',
     ];
     if ( ! isset( $funcs[ $name ] ) ) {
         return [ wp_json_encode( [ 'error' => "unknown tool $name" ] ), true ];
     }
-    $sports = in_array( $name, [ 'odds_board', 'best_edges', 'live_game' ], true ) ? array_keys( STATSIGHT_ASK_ODDS_SPORTS ) : STATSIGHT_ASK_ENGINE;
+    $sports = in_array( $name, [ 'odds_board', 'best_edges', 'market_board', 'live_game' ], true ) ? array_keys( STATSIGHT_ASK_ODDS_SPORTS ) : STATSIGHT_ASK_ENGINE;
     if ( isset( $args['sport'] ) && ! in_array( $args['sport'], $sports, true ) ) {
         return [ wp_json_encode( [ 'error' => 'Sport must be one of: ' . implode( ', ', $sports ) . '.' ] ), true ];
     }
