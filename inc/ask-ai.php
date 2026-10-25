@@ -619,6 +619,22 @@ function statsight_ask_positions( string $sport_key, array $teams ): array {
     return $out;
 }
 
+/** Anytime TD fair probability: the books' median implied chance less their margin (null with no prices). */
+function statsight_ask_td_fair_prob( array $odds ): ?float {
+    $impl = [];
+    foreach ( $odds as $o ) {
+        if ( isset( $o['over'] ) ) {
+            $impl[] = $o['over'] > 0 ? 100 / ( $o['over'] + 100 ) : abs( $o['over'] ) / ( abs( $o['over'] ) + 100 );
+        }
+    }
+    if ( ! $impl ) {
+        return null;
+    }
+    sort( $impl );
+    $n = count( $impl );
+    return min( 0.95, ( $n % 2 ? $impl[ intdiv( $n, 2 ) ] : ( $impl[ $n / 2 - 1 ] + $impl[ $n / 2 ] ) / 2 ) / STATSIGHT_ASK_TD['margin'] );
+}
+
 /**
  * One prop market across the slate, game by game, with players ranked by the market's fair (no-vig) probability of
  * the over / "yes" side. Answers "who's most likely to score", "which TE should score", "best anytime goalscorer".
@@ -682,7 +698,11 @@ function statsight_ask_market_board( string $sport, string $market, ?string $pos
             }
         }
         $v = statsight_calc_value( $r['odds'], 'over' );
-        if ( $v ) {
+        if ( $v && $key === 'player_anytime_td' ) {                // yes-only market with a heavier margin than the default
+            $fair = statsight_ask_td_fair_prob( $r['odds'] );
+            $best = $v['best_odds'];
+            $bk   = $v['best_bk'];
+        } elseif ( $v ) {
             $fair = $v['fair_prob'];
             $best = $v['best_odds'];
             $bk   = $v['best_bk'];
@@ -693,7 +713,7 @@ function statsight_ask_market_board( string $sport, string $market, ?string $pos
             }
             $best = max( $prices );
             $bk   = (string) array_search( $best, $prices, true );
-            $fair = $to_impl( $best ) / STATSIGHT_ONE_SIDED_MARGIN;
+            $fair = $to_impl( $best ) / ( $key === 'player_anytime_td' ? STATSIGHT_ASK_TD['margin'] : STATSIGHT_ONE_SIDED_MARGIN );
         }
         $games[ $r['matchup'] ]['start'] = $r['start'];
         $games[ $r['matchup'] ]['players'][] = [
@@ -846,17 +866,9 @@ function statsight_ask_td_matchups( ?string $position = null, ?string $game = nu
         if ( $r['key'] !== 'player_anytime_td' ) {
             continue;
         }
-        $impl = [];
-        foreach ( $r['odds'] as $o ) {
-            if ( isset( $o['over'] ) ) {
-                $impl[] = ( $o['over'] > 0 ? 100 / ( $o['over'] + 100 ) : abs( $o['over'] ) / ( abs( $o['over'] ) + 100 ) );
-            }
-        }
-        if ( $impl ) {
-            sort( $impl );
-            $n = count( $impl );
-            $med = $n % 2 ? $impl[ intdiv( $n, 2 ) ] : ( $impl[ $n / 2 - 1 ] + $impl[ $n / 2 ] ) / 2;
-            $market[ statsight_ask_player_key( $r['player'] ) ] = [ min( 0.95, $med / $cfg['margin'] ), statsight_fmt_odds( max( array_column( $r['odds'], 'over' ) ) ) ];
+        $fair = statsight_ask_td_fair_prob( $r['odds'] );
+        if ( $fair !== null ) {
+            $market[ statsight_ask_player_key( $r['player'] ) ] = [ $fair, statsight_fmt_odds( max( array_column( $r['odds'], 'over' ) ) ) ];
         }
     }
     $logit = fn( float $p ): float => log( $p / ( 1 - $p ) );
