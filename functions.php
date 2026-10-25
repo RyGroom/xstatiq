@@ -7070,7 +7070,7 @@ function statsight_ajax_get_best_value(): void {
     }
 
     $et_date   = ( new DateTime( 'now', new DateTimeZone( 'America/New_York' ) ) )->format( 'Y-m-d' );
-    $cache_key = 'statsight_bestvalue4_' . $sport . '_' . $et_date;
+    $cache_key = 'statsight_bestvalue5_' . $sport . '_' . $et_date;
     $cached    = get_transient( $cache_key );
     if ( false !== $cached ) {
         wp_send_json_success( $cached );
@@ -7278,10 +7278,13 @@ function statsight_ajax_get_best_value(): void {
             foreach ( $players as $player => $lines ) {
                 // For Yes/No markets the line key is always 'yn'.
                 // For O/U markets use the recorded default (standard) line.
+                // The cached payload stores the default line as a plain key ("24.5"); a fresh fetch above stores
+                // [ line, book ]. Read either.
                 $is_yes_no  = isset( $lines['yn'] );
+                $default    = $default_lines[ $mk ][ $player ] ?? null;
                 $default_lk = $is_yes_no
                     ? 'yn'
-                    : ( $default_lines[ $mk ][ $player ]['line'] ?? null );
+                    : ( is_array( $default ) ? ( $default['line'] ?? null ) : $default );
 
                 if ( $default_lk === null || ! isset( $lines[ $default_lk ] ) ) continue;
 
