@@ -5325,6 +5325,8 @@ function statsight_ajax_get_all_props(): void {
             }
             foreach ( $market_data as $player => $lines ) {
                 foreach ( $lines as $line => $bk_data ) {
+                    // Arbitrage is only real between prices that are current, so lagging books are left out.
+                    $bk_data = statsight_fresh_book_data( $cached_props, $market_key, $bk_data, $event['commence_time'] ?? '' );
                     foreach ( $bk_data as $bk => $odds ) {
                         if ( ! isset( $result[ $event_id ]['markets'][ $base_key ][ $player ][ $line ][ $bk ] ) ) {
                             $result[ $event_id ]['markets'][ $base_key ][ $player ][ $line ][ $bk ] = $odds;
@@ -6162,6 +6164,8 @@ function statsight_fetch_and_cache_props( string $sport, string $event_id, array
     // Markets where the outcome name is Over/Under with no description field.
     $game_level_markets = [ 'totals', 'spreads', 'alternate_totals', 'alternate_spreads' ];
 
+    $book_updated = []; // base market key => book key => when that book last updated the market (Unix time)
+
     foreach ( $data['bookmakers'] ?? [] as $bookmaker ) {
         $book_key                = $bookmaker['key'];
         $books_seen[ $book_key ] = $bookmaker['title'];
@@ -6169,6 +6173,12 @@ function statsight_fetch_and_cache_props( string $sport, string $event_id, array
         foreach ( $bookmaker['markets'] ?? [] as $market ) {
             $market_key  = $market['key'];
             $is_standard = ! str_ends_with( $market_key, '_alternate' );
+
+            $updated_at = strtotime( $market['last_update'] ?? '' );
+            $base_mk    = preg_replace( '/_alternate$/', '', $market_key );
+            if ( $updated_at && $updated_at > ( $book_updated[ $base_mk ][ $book_key ] ?? 0 ) ) {
+                $book_updated[ $base_mk ][ $book_key ] = $updated_at;
+            }
 
             foreach ( $market['outcomes'] ?? [] as $outcome ) {
                 $player = $outcome['description'] ?? '';
@@ -6509,6 +6519,7 @@ function statsight_fetch_and_cache_props( string $sport, string $event_id, array
         'props'         => $props,
         'default_lines' => $flat_defaults,
         'fetched_at'    => time(),
+        'book_updated'  => $book_updated,
     ];
 
     // Write history snapshot then warm the cache.
@@ -6516,6 +6527,24 @@ function statsight_fetch_and_cache_props( string $sport, string $event_id, array
     set_transient( 'statsight_props2_' . $event_id, $payload, STATSIGHT_PROPS_TTL );
 
     return $payload;
+}
+
+/** How far a book's last update may trail the freshest book's before its price is treated as stale. */
+const STATSIGHT_BOOK_LAG_LIVE = 2 * MINUTE_IN_SECONDS;
+const STATSIGHT_BOOK_LAG_PRE  = HOUR_IN_SECONDS;
+
+/**
+ * One line's book prices minus books that are lagging on this market: a book whose last update trails the
+ * freshest book's by more than 2 minutes in a live game (prices move by the second, so a lagging book shows a
+ * price that's gone) or an hour before it. Books without a timestamp (older cached payloads) are kept.
+ */
+function statsight_fresh_book_data( array $payload, string $market_key, array $bk_data, string $commence_time ): array {
+    $updated = $payload['book_updated'][ preg_replace( '/_alternate$/', '', $market_key ) ] ?? [];
+    if ( ! $updated ) return $bk_data;
+
+    $live   = $commence_time && strtotime( $commence_time ) <= time();
+    $cutoff = max( $updated ) - ( $live ? STATSIGHT_BOOK_LAG_LIVE : STATSIGHT_BOOK_LAG_PRE );
+    return array_filter( $bk_data, fn( $bk ) => ( $updated[ $bk ] ?? PHP_INT_MAX ) >= $cutoff, ARRAY_FILTER_USE_KEY );
 }
 
 /**
@@ -7288,7 +7317,7 @@ function statsight_ajax_get_best_value(): void {
 
                 if ( $default_lk === null || ! isset( $lines[ $default_lk ] ) ) continue;
 
-                $bk_data    = $lines[ $default_lk ];
+                $bk_data    = $props_cache ? statsight_fresh_book_data( $props_cache, $mk, $lines[ $default_lk ], $time ) : $lines[ $default_lk ];
                 $odds_map   = [];
 
                 foreach ( $bk_data as $bk => $odds ) {
@@ -9547,7 +9576,7 @@ function statsight_cron_send_notifications(): void {
                             $default_line = $def_lines[ $base_key ][ $player ] ?? null;
                             if ( ! $default_line || ! isset( $lines[ $default_line ] ) ) continue;
 
-                            $book_data = $lines[ $default_line ];
+                            $book_data = statsight_fresh_book_data( $payload, $base_key, $lines[ $default_line ], $event['commence_time'] ?? '' );
 
                             // Arbitrage: best over + best under < 100% combined implied.
                             $best_over  = null; $best_over_bk  = '';
