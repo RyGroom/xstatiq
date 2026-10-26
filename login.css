@@ -234,3 +234,147 @@ body.login {
 .login #login_error {
     border-left-color: #ef4444;
 }
+
+/* ── Reset password form ── */
+#resetpassform {
+    background: #111318;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 14px;
+    padding: 2rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.4), 0 4px 16px rgba(0,0,0,0.3);
+    margin-top: 1rem;
+}
+
+.login #resetpassform .description,
+.login .reset-pass-submit + p,
+.login .indicator-hint {
+    color: rgba(240, 242, 247, 0.45);
+    font-size: 0.8rem;
+}
+
+.login .wp-pwd .button.wp-hide-pw {
+    color: rgba(240, 242, 247, 0.45);
+    background: none;
+    border: none;
+    box-shadow: none;
+}
+
+/* ── Administration email check ── */
+.login-action-confirm_admin_email #login {
+    width: 100%;
+    max-width: 480px;
+    padding: 2rem 1rem;
+    box-sizing: border-box;
+}
+
+.login form.admin-email-confirm-form {
+    background: #111318;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 14px;
+    padding: 2rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.4), 0 4px 16px rgba(0,0,0,0.3);
+    margin-top: 1rem;
+    color: rgba(240, 242, 247, 0.7);
+    font-size: 0.9rem;
+    line-height: 1.55;
+}
+
+.login .admin-email__heading {
+    color: #f0f2f7;
+    font-size: 1.25rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    padding-bottom: 1rem;
+    margin-bottom: 1.25rem;
+}
+
+.login form.admin-email-confirm-form strong {
+    color: #f0f2f7;
+    font-weight: 600;
+}
+
+/* The address itself, on its own line */
+.login .admin-email__details + .admin-email__details strong {
+    display: block;
+    margin-top: 0.15rem;
+    overflow-wrap: anywhere;
+}
+
+.login form.admin-email-confirm-form a {
+    color: #2e7cf6;
+    text-decoration: none;
+}
+
+.login form.admin-email-confirm-form a:hover {
+    text-decoration: underline;
+}
+
+.login .admin-email__actions {
+    margin-top: 1.5rem;
+}
+
+.login .admin-email__actions-primary {
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 0.6rem;
+    width: 100%;
+}
+
+.login .admin-email__actions-primary .button,
+.login .admin-email__actions-primary .button-primary {
+    display: block;
+    width: 100%;
+    margin: 0;
+    box-sizing: border-box;
+    text-align: center;
+    min-height: 0;
+    height: auto;
+    line-height: 1.4;
+    padding: 0.65rem 1.25rem;
+}
+
+.login .admin-email__actions-primary a.button {
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    color: rgba(240, 242, 247, 0.8);
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 0.9rem;
+    font-weight: 600;
+    padding: 0.65rem 1.25rem;
+    transition: border-color 0.15s, color 0.15s;
+}
+
+.login .admin-email__actions-primary a.button:hover {
+    background: transparent;
+    border-color: #2e7cf6;
+    color: #f0f2f7;
+    text-decoration: none;
+}
+
+.login .admin-email__actions-secondary {
+    margin-top: 1rem;
+    text-align: center;
+}
+
+.login .admin-email__actions-secondary a {
+    color: rgba(240, 242, 247, 0.45) !important;
+    font-size: 0.85rem;
+}
+
+/* ── Privacy policy link ── */
+.login .privacy-policy-page-link {
+    text-align: center;
+    margin-top: 1.5rem;
+}
+
+.login .privacy-policy-page-link a {
+    color: rgba(240, 242, 247, 0.35);
+    font-size: 0.8rem;
+    text-decoration: none;
+}
+
+.login .privacy-policy-page-link a:hover {
+    color: #2e7cf6;
+}
